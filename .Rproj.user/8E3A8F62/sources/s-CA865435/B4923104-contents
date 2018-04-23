@@ -1,0 +1,424 @@
+---
+title: Directional Change Ideas - NutNet
+author: Evan Batzer
+date: Jan 22, 2018
+output:
+  prettydoc::html_pretty:
+    highlight: github
+
+---
+
+## Directional change in community composition based on treatment identity
+
+### Background
+
+- Global changes related to resource limtation are a well-studied phenomenon in
+ecology. Chronic nutrient enrichment, for example, is often expected to drive
+changes in community composition by altering competitive interactions.
+- Many experiments that explore global change factors do so on relatively short
+timescales. However, these effects may not hold constant over time.
+- Interactions between multiple drivers of resource limitation may be expected
+to produce nonlinear shifts in community dynamics that may contrast with those
+observed in short-term manipulative experiments.
+- In particular, the strength of directional change in community composition is 
+expected to be dependent on the nature of artificial resource enrichment (press vs. pulse) +
+other sources of environmental heterogeneity in a given system (e.g. Smith et al. 2009).
+- When chronic nutrient deposition affects the primary axis of resource competition
+in community assembly, consistent directional change in community composition may
+be expected.
+- However, when nutrient deposition interacts strongly with other drivers of 
+resource limitation (such as normal environmental fluctuations, or extreme events, such as drought), 
+community change may be strongly nonlinear/idiosyncratic
+
+__Study sites__
+
+NutNet has the advantage of (relatively) long-term datasets of community change across a number of sites in the United States.
+Within both California and across the Great Plains, there are sites containing nutrient enrichment treatments across a gradient of climatic conditions (precipitation/temperature)
+
+* California Nutrient Network sites
+* American perennial grassland sites? Konza/CdrCreek/etc.
+
+__Some expectations:__  
+
+* All sites show changes in ANPP as a function of Nutrient enrichment + climate 
+
+* Sites with the greatest sensitivity to climate in ANPP will show the least directional change 
+
+* Sites with an annual life history (greater sensitivity / variability) will show less directional change 
+
+* In all sites, nutrient enrichment will cause segregation of communities with respect to one another over time 
+
+* Strength of nutrient enrichment in explaining multivariate dissimilaritiy between communities will depend on climate sensitivity 
+
+__Steps:__
+
+1. Present characterization of site resource limitation and taxa __(Siddharth, would this be possible with some of your data?)__
+2. Evaluate community directional change in response to nutrient enrichment over time.
+3. Run ordination of multivariate community composition
+5. PermDISP analysis of increasing dispersion over time
+4. Evaluate significance of nutrient identity factors on community variance (CAP may be the best choice)
+
+__Note:__  
+
+For this analysis, I only focused on 3 treatments (N, P, K) and controls. It may make sense to look at all factorial combinations, but the analysis for that is a little more challenging. How to define factor levels for treatment? All unique or additive?
+
+
+```{r, message = FALSE, echo = FALSE, warning = FALSE}
+################################################################################
+### Data preprocessing
+
+# Loading necessary packages
+library(codyn) # Temporal analysis
+library(ggplot2) # Figure plotting
+library(tidyverse) # Data manipulation
+library(lubridate)
+library(data.table)
+library(vegetarian) # Exponentiated diversity indices (Hill Numbers)
+library(lme4) # Linear mixed effects models
+library(vegan)
+
+################################################################################
+# Loading in dataset (up to 2017 data)
+cov.long <- fread('C:/Users/ebatz/Dropbox/NutNet Data/full-cover-09-April-2018.csv',
+                  na.strings = c('NA','NULL'))
+
+# Subsetting to just California sites
+site.subset <- c("mcla.us", "hopl.us", "sier.us", "elliot.us", "sedg.us",
+                 "cdcr.us", "konz.us", "cbgb.us", "trel.us", "cdpt.us")
+cov.long <- cov.long[cov.long$site_code %in% site.subset,]
+
+# Choose identifying variables
+ids <- c('site_code','year','year_trt', 'block','plot','trt')
+
+# Remove non-live percent cover esimates
+cov.long[,max_cover:=as.numeric(max_cover)] 
+cov.long <- cov.long[live==1]
+
+# Cast long into wide
+plot.sp.mat <- dcast(cov.long,site_code+year+block+plot+trt+year_trt ~ Taxon,value.var='max_cover', 
+                     fun.aggregate = sum,drop=T,fill=0)
+
+################################################################################
+# Loading in climate data
+```
+
+### Constructing estimates of change in abundance-weighted diversity
+
+The first analysis I wanted to conduct was to see if there's a general trend in abundance-weighted diversity in these sites. 
+I think of this as being the classic response to nutrient enrichment -- a decrease in diversity that saturates over time as added nutrients no longer become limiting.
+
+However, it doesn't seem like there's a consistent pattern across sites. In general, diversity is all over the place -- the signal of nutrient enrichment isn't very strong.
+
+Note: In these figures, I'm using an exponentiated diversity index (sometimes referred to as Hill numbers). I'm not sure how familiar other folks are with this metric, but it's very similar to Shannon diversity, with some advantages when comparing sites with big differences in total species richness.
+
+```{r, echo = F}
+# Defines the "jostAlpha" function to calculate Hill diversities 
+# I don't like the vegetarian function call of "d"
+jostAlpha <- function(x, q){
+  return(d(x, lev = "alpha", q = q, wts = FALSE))
+}
+
+# Apply alpha diversity calculation over all rows
+# q = 2 (inverse simpson)
+alpha.div2 <- apply(MARGIN = 1,
+                   plot.sp.mat[,-(1:6)],
+                   jostAlpha,
+                   q = 2)
+
+# q = 1 (exponentiated shannon)
+alpha.div1 <- apply(MARGIN = 1,
+                   plot.sp.mat[,-(1:6)],
+                   jostAlpha,
+                   q = 1)
+
+# q = 0 (species richness)
+alpha.div0 <- apply(MARGIN = 1,
+                   plot.sp.mat[,-(1:6)],
+                   jostAlpha,
+                   q = 0)
+
+# Combine into a single dataframe for plotting
+alpha.byplot <- cbind(plot.sp.mat[,1:6],
+                      alpha.div2,
+                      alpha.div1,
+                      alpha.div0)
+
+
+```
+
+```{r, echo = F}
+# Subsetting by treatment
+trts <- c("Control", "N", "P", "K")
+
+# Plotting alpha diversity:
+ggplot(aes(x = jitter(as.numeric(year_trt)),
+           y = alpha.div1,
+           color = trt),
+       data = alpha.byplot[alpha.byplot$trt %in% trts,]) +
+  facet_wrap(~site_code, scales = "free_y") +
+  geom_point()
+
+```
+
+I was a little surprised by this result, so double-checked the shannon diversity richness values that are provided in the dropbox. The result seems about the same:
+
+```{r, echo = F, message = FALSE}
+divstats <- read.csv("C:/Users/ebatzer/Dropbox/NutNet Data/plot_diversity_stats2-04-Dec-2017.csv")
+trtlabels <- read.csv("C:/Users/ebatzer/Dropbox/NutNet Data/all-plot-descriptions-1-December-2017.csv")
+divstats <- left_join(divstats, trtlabels)
+
+ggplot(aes(x = as.numeric(year),
+           y = shan,
+           color = Treatment),
+       data = divstats[divstats$site_code %in% site.subset &
+                       divstats$Treatment %in% trts,]) +
+  facet_wrap(~site_code, scales = "free_y") +
+  geom_point()
+
+```
+
+```{r, include = F}
+# Linear mixed-effect model
+alpha.byplot$year_trt <- as.numeric(alpha.byplot$year_trt)
+
+mod_1 <- lmer(alpha.div1 ~ trt + year_trt + trt:year_trt + (1|site_code) + (1|site_code:block),
+              data = alpha.byplot[alpha.byplot$trt %in% trts,])
+summary(mod_1)
+
+mod_2 <- lmer(alpha.div1 ~ year_trt + (1|site_code) + (1|site_code:block),
+              data = alpha.byplot[alpha.byplot$trt %in% trts,])
+
+mod_3 <- lmer(alpha.div1 ~ trt + (1|site_code) + (1|site_code:block),
+              data = alpha.byplot[alpha.byplot$trt %in% trts,])
+
+anova(mod_1, mod_2)
+
+anova(mod_1, mod_3)
+
+```
+
+### Conducting analysis of temporal change
+
+If there isn't a great story associated wih diversity change, I think a focus on compositional change would be more compelling. From when we last talked about your work, I remember you talking about a project exploring the relationship between aridity index and the interaction between precipitation, temperature, and nutrient enrichment.
+
+I think it would be really interesting to provide some context to compositional changes we might see. Comparing the relative strength of climate and nutrient enrichment effects might give us a sense of what resources are limiting in this system - if more arid systems experience greater influence of temperature and precipitation, we might anticipate that community change won't follow a consistent directional trend, but fluctuate with seasonal variation.
+
+My thought on how to incorporate this into analysis would be a relatively surface-level characterization, perhaps just reporting something like aridity index, MAT, and MAP for each site. I wouldn't want to overlap with what you've been working on, but think this would be an opportunity to support our analysis with characterization of site resource limitation.
+
+### Conducting analysis of temporal change
+
+I think there are two key contrasts to be made in temporal analysis: 
+
+1. Annual vs perennially dominated sites.  
+
+2. Degree of climatic vs fertilization resource limitation.  
+
+Hypotheses:
+
+1. Perenially-dominated sites will show stronger patterns of directional community change in response to nutrient enrichment.
+
+2. Less arid sites will show stronger patterns of directional community change in response to nutrient enrichment.
+
+As a first stab at this analysis, I used a modified version of the "rate_change_interval()" from the Codyn package. Rather than Euclidean distance, I opted for Bray-Curtis distance and a sqrt() transformed species matrix to reduce the influence of dominants. I don't see any immediate issues with this approach, and it keeps analysis consistent with multivariate approaches (see next section).
+
+In the following graphs, colored lines represent simple linear models to different treatments, faceted by site. Individual points reflect Bray-Curtis dissimilarity on the Y-axis and temporal lag on the X. Note: these treatments only focus on three treatments; N, P, and K.
+
+From these figures, there seems to be a detectable N effect, *but only for perennial grassland sites*! Directional change is more or less the same among treatments in California.
+
+Preliminary fitting of linear mixed models to this data seems to confirm that treatment effects have an influence on compostional change. An F-test of models with and without a treatment factor show a significant increase in fit.
+
+```{r, echo = F}
+
+# Codyn package requires long-format data, so we'll stick with the cov.long dataset
+# Subsetting to just include live taxa
+tempvar.dat <- cov.long[cov.long$live == 1,]
+tempvar.dat$year_trt <- as.numeric(tempvar.dat$year_trt)
+tempvar.dat$max_cover <- sqrt(tempvar.dat$max_cover)
+
+calcRateChange <- function(x){
+  rc <- codyn::rate_change_interval(x,
+                    time.var = "year_trt",
+                    species.var = "Taxon",
+                    abundance.var = "max_cover")
+  return(rc)
+}
+
+calcRateChange_bray <- function(comdf, comvar, abundvar, timevar){
+  # Take dataframe,
+  # Cast by species variable and abundance
+  # Take just numeric values
+  # Assign to commat
+  ssdf <- comdf[,colnames(comdf) %in% c(comvar, abundvar, timevar)]
+  commat <- spread(data.frame(ssdf), 
+                   comvar,
+                   max_cover,
+                   drop = TRUE,
+                   fill = 0)
+  
+  # Calculate vegetation distance
+  vd <- vegdist(commat[,-1], method = "bray")
+  td <- dist(commat[,colnames(commat) == timevar])
+  output <- cbind(interval = c(td), distance = c(vd))
+  return(data.frame(output))
+}
+
+temp_ratechange_bray <- data.frame(tempvar.dat) %>% group_by(site_code, block, plot, trt) %>%
+  do(calcRateChange_bray(., timevar = "year_trt",
+                         comvar = "Taxon",
+                         abundvar = "max_cover"))
+
+# To confirm that the function is working properly:
+newdf = tempvar.dat[tempvar.dat$site_code == "mcla.us" &
+                      tempvar.dat$block == 1 &
+                      tempvar.dat$plot == 1,]
+
+ratechange_errorchecking <- calcRateChange_bray(data.frame(newdf),
+                                                timevar = "year_trt",
+                                                comvar = "Taxon",
+                                                abundvar = "max_cover")
+
+# Plotting results
+ggplot(aes(x = interval,
+           y = distance,
+           color = trt),
+       data = temp_ratechange_bray[temp_ratechange_bray$trt %in% trts,]) +
+  geom_point(alpha = .1) +
+  facet_wrap(~site_code, scales = "free") + 
+  stat_smooth(method = "lm", se = FALSE)
+
+# Some simple linear mixed effects models
+m1 <- lmer(distance ~ interval + interval:trt + (1 | site_code) + (1|site_code : block),
+     data = temp_ratechange_bray[temp_ratechange_bray$trt %in% trts,],
+     REML = FALSE)
+
+m2 <- lmer(distance ~ interval + (1 | site_code) + (1|site_code : block),
+     data = temp_ratechange_bray[temp_ratechange_bray$trt %in% trts,],
+     REML = FALSE)
+
+# Anova of nested models (with and without treatment effects)
+anova(m1, m2)
+
+# Treatment effects model summary
+summary(m1)
+```
+
+### Ordination-based methods
+
+The above analysis is neat, but only presents a limited scope of comparison. While we can tell how different a given plot is to itself in a previous year, community distance per time interval doesn't tell us if these changes occur in a consistent manner. For all we know, the average nutrient enriched community over this given time period could be the same as the control, but its variability is greater. 
+
+To supplement, I think some ordination based analysis of community variation over time will allow us to compare:
+  - How different communities in a given site are from one another. (Even if there is no difference in rate of change, are they moving in different directions?) Do different nutrients move communities in different directions? Do these changes increase over time?
+  - How closely are sites clustering over time? Does interannual variation (attributed to climate) or nutrient enrichment effect better predict compositional differences?
+  
+This has two steps:  
+
+1. Quantifying dispersion over time (permDISP in Vegan) 
+
+2. Partitioning community variation due to nutrient identity and year.  
+
+As an illustration, I repeated this analysis for two sites - McLaughlin and Cedar Creek.
+
+In the first and second figure for each, I've got a couple ordination plots that show overall site dispersion (Bray-Curtis disimmilarity), grouped either by year or by treatment.
+
+In the third, I've got some output for a CAP constrained ordination analysis, along with the output of the varpart() variance partitioning function (related to RDA). 
+
+In all cases, I've square root transformed the data to dampen some of the noise. Without this step, dominant species exert a little too much control to create distinct patterns, and I expect that precision of visual estimation goes down at higher %cover values. All distance measures are Bray-Curtis, but this can also be changed. 
+
+The general pattern I see here is that McLaughlin shows a stronger trend of increasing dispersion through time, but a much weaker signal of nutrient enrichment on the overall pattern. Cedar Creek, however, shows to opposite - slower change in dispersion through time, but a stronger nutrient enrichment signal overall.
+
+
+```{r, echo = FALSE}
+
+siteName <- "mcla.us"
+distmethod <- "bray"
+
+ord.sp.mat <- plot.sp.mat[plot.sp.mat$trt %in% trts]
+sp.mat <- ord.sp.mat[ord.sp.mat$site_code == siteName, -(1:6)]
+env.mat <- ord.sp.mat[ord.sp.mat$site_code == siteName, 1:6]
+
+# Standardizing species matrix
+sp.mat <- sqrt(sp.mat)
+
+sp.dist <- vegdist(sp.mat,
+                method = distmethod)
+par(mfrow = c(1,2))
+disp.mat <- betadisper(sp.dist,
+           group = env.mat$year_trt)
+plot(disp.mat, main = paste(siteName, "BC-D by Year"))
+boxplot(disp.mat)
+
+disp.mat <- betadisper(sp.dist,
+           group = env.mat$trt)
+plot(disp.mat, main = paste(siteName, "BC-D by Treatment"))
+boxplot(disp.mat)
+```
+
+
+```{r}
+cap.full <- capscale(sp.mat ~ trt * as.numeric(year_trt) + as.factor(block),
+         env.mat,
+         distance = distmethod)
+
+cap.full
+screeplot(cap.full)
+varpart(sp.mat, ~ trt + as.factor(block), ~ year_trt, data = env.mat)
+```
+
+```{r, echo = FALSE}
+
+siteName <- "cdcr.us"
+distmethod <- "bray"
+
+ord.sp.mat <- plot.sp.mat[plot.sp.mat$trt %in% trts]
+sp.mat <- ord.sp.mat[ord.sp.mat$site_code == siteName, -(1:6)]
+env.mat <- ord.sp.mat[ord.sp.mat$site_code == siteName, 1:6]
+
+# Standardizing species matrix
+sp.mat <- sqrt(sp.mat)
+
+sp.dist <- vegdist(sp.mat,
+                method = distmethod)
+par(mfrow = c(1,2))
+
+disp.mat <- betadisper(sp.dist,
+           group = env.mat$year_trt)
+plot(disp.mat, main = paste(siteName, "BC-D by Year"))
+boxplot(disp.mat)
+
+disp.mat <- betadisper(sp.dist,
+           group = env.mat$trt)
+plot(disp.mat, main = paste(siteName, "BC-D PCoA by Treatment"))
+boxplot(disp.mat)
+```
+
+
+```{r}
+cap.full <- capscale(sp.mat ~ trt * year_trt + as.factor(block),
+         env.mat,
+         distance = distmethod)
+
+cap.full
+screeplot(cap.full)
+varpart(sp.mat, ~ trt + as.factor(block), ~ year_trt, data = env.mat)
+```
+
+
+```{r, include = FALSE}
+
+par(mfrow = c(1,2))
+plot(cap.full,
+     display = "sites")
+
+ordihull(cap.full,
+         groups = env.mat$year_trt,
+         label = T,
+         col = rainbow(9))
+
+plot(cap.full,
+     display = "sites")
+ordihull(cap.full,
+         groups = env.mat$trt,
+         label = T,
+         col = c("red", "blue", "forestgreen", "black"))
+
+```

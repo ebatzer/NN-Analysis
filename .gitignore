@@ -1,0 +1,11 @@
+*.xlsx
+*.xls
+*.csv
+*.tsv
+*.doc
+*.rdf
+*.pdf
+*.png
+*.json
+*.metadata
+*.snapshot
