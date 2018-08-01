@@ -9,3 +9,4 @@
 *.json
 *.metadata
 *.snapshot
+.Rproj.user

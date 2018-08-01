@@ -76,9 +76,10 @@ library(data.table)
 library(vegetarian) # Exponentiated diversity indices (Hill Numbers)
 library(lme4) # Linear mixed effects models
 library(vegan)
+library(data.table)
 
 ################################################################################
-# Loading in dataset (up to 2017 data)
+# Loading in dataset (April 2018 Data)
 cov.long <- fread('C:/Users/ebatz/Dropbox/NutNet Data/full-cover-09-April-2018.csv',
                   na.strings = c('NA','NULL'))
 
@@ -99,7 +100,9 @@ plot.sp.mat <- dcast(cov.long,site_code+year+block+plot+trt+year_trt ~ Taxon,val
                      fun.aggregate = sum,drop=T,fill=0)
 
 ################################################################################
+
 # Loading in climate data
+
 ```
 
 ### Constructing estimates of change in abundance-weighted diversity
@@ -152,7 +155,7 @@ trts <- c("Control", "N", "P", "K")
 
 # Plotting alpha diversity:
 ggplot(aes(x = jitter(as.numeric(year_trt)),
-           y = alpha.div1,
+           y = alpha.div0,
            color = trt),
        data = alpha.byplot[alpha.byplot$trt %in% trts,]) +
   facet_wrap(~site_code, scales = "free_y") +
@@ -163,8 +166,8 @@ ggplot(aes(x = jitter(as.numeric(year_trt)),
 I was a little surprised by this result, so double-checked the shannon diversity richness values that are provided in the dropbox. The result seems about the same:
 
 ```{r, echo = F, message = FALSE}
-divstats <- read.csv("C:/Users/ebatzer/Dropbox/NutNet Data/plot_diversity_stats2-04-Dec-2017.csv")
-trtlabels <- read.csv("C:/Users/ebatzer/Dropbox/NutNet Data/all-plot-descriptions-1-December-2017.csv")
+divstats <- read.csv("C:/Users/ebatz/Dropbox/NutNet Data/plot_diversity_stats2-09-Apr-2018.csv")
+trtlabels <- read.csv("C:/Users/ebatz/Dropbox/NutNet Data/all-plot-descriptions-1-December-2017.csv")
 divstats <- left_join(divstats, trtlabels)
 
 ggplot(aes(x = as.numeric(year),
@@ -177,12 +180,127 @@ ggplot(aes(x = as.numeric(year),
 
 ```
 
+However, the year-to-year variation in this data is also striking, particularly among California sites. Sedgwick shows a persistent decrease in diversity over time, while McLaughlin seems to increase. Perhaps using a measure like the difference relative to control for each block would make more sense, or the ratio (or log-ratio) of diversity change would be more meaningful.
+
+
+
+```{r}
+# Elliot has one less control site
+plot.sp.mat %>% group_by(site_code, block, trt) %>% 
+  dplyr::summarise(count = n()) %>% 
+  group_by(site_code, block) %>%
+  filter(count[trt == "Control"] < max(count))
+
+plot.sp.mat %>% 
+  filter(site_code == "elliot.us") %>%
+  group_by(year, block) %>% 
+  dplyr::summarise(count = n()) %>%
+  arrange(count)
+
+control_change <- inner_join(cbind(plot.sp.mat[,1:6], alpha.div0) %>% 
+  group_by(site_code, year, block) %>%
+  filter(!(site_code == "elliot.us" & year == "2014")) %>%
+  mutate(diff_control_q0 = alpha.div0 - alpha.div0[trt == "Control"],
+         diff_ratio_q0 = (alpha.div0 - alpha.div0[trt == "Control"]) / alpha.div0[trt == "Control"]),
+  cbind(plot.sp.mat[,1:6], alpha.div1) %>% 
+  group_by(site_code, year, block) %>%
+  filter(!(site_code == "elliot.us" & year == "2014")) %>%
+  mutate(diff_control_q1 = alpha.div1 - alpha.div1[trt == "Control"],
+         diff_ratio_q1 = (alpha.div1 - alpha.div1[trt == "Control"]) / alpha.div1[trt == "Control"])) %>% inner_join(
+  cbind(plot.sp.mat[,1:6], alpha.div2) %>% 
+  group_by(site_code, year, block) %>%
+  filter(!(site_code == "elliot.us" & year == "2014")) %>%
+  mutate(diff_control_q2 = alpha.div2 - alpha.div2[trt == "Control"],
+         diff_ratio_q2 = (alpha.div2 - alpha.div2[trt == "Control"]) / alpha.div2[trt == "Control"]))
+  
+control_change %>% filter(trt %in% trts) %>%
+  ggplot(aes(x = as.numeric(year_trt),
+           y = diff_control_q0,
+           color = trt)) +
+  facet_wrap(~site_code, scales = "free_y") +
+  geom_point() + 
+  stat_smooth(se = FALSE) +
+  ggtitle("Difference from control at Q0")
+
+control_change %>% filter(trt %in% trts) %>%
+  ggplot(aes(x = as.numeric(year_trt),
+           y = diff_control_q1,
+           color = trt)) +
+  facet_wrap(~site_code, scales = "free_y") +
+  geom_point() + 
+  stat_smooth(se = FALSE) +
+  ggtitle("Difference from control at Q1")
+
+control_change %>% filter(trt %in% trts) %>%
+  ggplot(aes(x = as.numeric(year_trt),
+           y = diff_control_q2,
+           color = trt)) +
+  facet_wrap(~site_code, scales = "free_y") +
+  geom_point() + 
+  stat_smooth(se = FALSE) +
+  ggtitle("Difference from control at Q2")
+
+```
+
+```{r}
+control_change %>% filter(trt %in% trts) %>%
+  ggplot(aes(x = as.numeric(year_trt),
+           y = diff_ratio_q0,
+           color = trt)) +
+  facet_wrap(~site_code, scales = "free_y") +
+  geom_point() + 
+  stat_smooth(se = FALSE) +
+  ggtitle("Difference from control at Q0")
+
+control_change %>% filter(trt %in% trts) %>%
+  ggplot(aes(x = as.numeric(year_trt),
+           y = diff_ratio_q1,
+           color = trt)) +
+  facet_wrap(~site_code, scales = "free_y") +
+  geom_point() + 
+  stat_smooth(se = FALSE) +
+  ggtitle("Difference from control at Q1")
+
+control_change %>% filter(trt %in% trts) %>%
+  ggplot(aes(x = as.numeric(year_trt),
+           y = diff_ratio_q2,
+           color = trt)) +
+  facet_wrap(~site_code, scales = "free_y") +
+  geom_point() + 
+  stat_smooth(se = FALSE) +
+  ggtitle("Difference from control at Q2")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ```{r, include = F}
 # Linear mixed-effect model
 alpha.byplot$year_trt <- as.numeric(alpha.byplot$year_trt)
 
-mod_1 <- lmer(alpha.div1 ~ trt + year_trt + trt:year_trt + (1|site_code) + (1|site_code:block),
+mod_1 <- lmer(alpha.div2 ~ trt + trt:year_trt + (1|site_code) + (1|site_code:block) + (1|site_code:block:year_trt),
               data = alpha.byplot[alpha.byplot$trt %in% trts,])
+
+anova(mod_1)
 summary(mod_1)
 
 mod_2 <- lmer(alpha.div1 ~ year_trt + (1|site_code) + (1|site_code:block),
@@ -233,7 +351,6 @@ Preliminary fitting of linear mixed models to this data seems to confirm that tr
 # Subsetting to just include live taxa
 tempvar.dat <- cov.long[cov.long$live == 1,]
 tempvar.dat$year_trt <- as.numeric(tempvar.dat$year_trt)
-tempvar.dat$max_cover <- sqrt(tempvar.dat$max_cover)
 
 calcRateChange <- function(x){
   rc <- codyn::rate_change_interval(x,
@@ -256,7 +373,7 @@ calcRateChange_bray <- function(comdf, comvar, abundvar, timevar){
                    fill = 0)
   
   # Calculate vegetation distance
-  vd <- vegdist(commat[,-1], method = "bray")
+  vd <- vegdist(decostand(commat[,-1], method = "hellinger"), method = "bray")
   td <- dist(commat[,colnames(commat) == timevar])
   output <- cbind(interval = c(td), distance = c(vd))
   return(data.frame(output))
@@ -287,7 +404,7 @@ ggplot(aes(x = interval,
   stat_smooth(method = "lm", se = FALSE)
 
 # Some simple linear mixed effects models
-m1 <- lmer(distance ~ interval + interval:trt + (1 | site_code) + (1|site_code : block),
+m1 <- lmer(distance ~ interval + interval:trt + (1 + interval | site_code) + (1|site_code : block),
      data = temp_ratechange_bray[temp_ratechange_bray$trt %in% trts,],
      REML = FALSE)
 
@@ -300,7 +417,57 @@ anova(m1, m2)
 
 # Treatment effects model summary
 summary(m1)
+
+ggsave("Figures/RateChangeFig.jpeg", height = 10, width = 15)
 ```
+
+### Dissimilarity relative to control:
+
+```{r}
+
+calc_dissimilarity <- function(x){
+  
+  # For each year in each block in each site
+  
+  # Calculate the dissimilarity matrix
+  distmat <- vegdist(decostand(x[,-c(1:6)], method = "hellinger"), diag = TRUE)
+  distmat <- data.frame(as.matrix(distmat))
+  
+  # Rename the distance matrix so that columns and rows are treatment names
+  colnames(distmat) <- x$trt
+  rownames(distmat) <- x$trt
+  distmat$trt <- x$trt
+  
+  # Return the dataframe
+  return(distmat)
+   
+}
+
+x <- plot.sp.mat %>% group_by(site_code, block, trt, year) %>% 
+  filter(site_code == "mcla.us" & year == "2017" & block == 1) 
+
+calc_dissimilarity(x)
+
+pairwise_dist <- plot.sp.mat %>%
+  group_by(site_code, block, year) %>% 
+  filter(trt %in% trts) %>%
+  filter(site_code != "sedg.us") %>%
+  do(calc_dissimilarity(.))
+  
+pairwise_dist %>% gather(key = "pair", value = "dist", -site_code, -block, -year, -trt) %>%
+  ggplot(aes(x = as.numeric(year),
+             y = dist,
+             color = pair)) +
+    geom_point(alpha = .05) +
+  stat_smooth(method = "lm", size = 1.5, se = FALSE) + 
+  stat_smooth(aes(group = site_code), method = "lm", geom = "line", alpha = .5, se = FALSE) + 
+  facet_grid(trt ~ pair) 
+
+ggsave("Figures/PairwiseDissimilarity.jpeg", height = 10, width = 15)
+```
+
+
+
 
 ### Ordination-based methods
 
@@ -355,6 +522,33 @@ boxplot(disp.mat)
 
 
 ```{r}
+
+siteName <- "hopl.us"
+distmethod <- "bray"
+
+ord.sp.mat <- plot.sp.mat[plot.sp.mat$trt %in% trts]
+ord.sp.mat <- plot.sp.mat[plot.sp.mat$trt %in% trts]
+sp.mat <- ord.sp.mat[ord.sp.mat$site_code == siteName, -(1:6)]
+env.mat <- ord.sp.mat[ord.sp.mat$site_code == siteName, 1:6]
+
+
+z <- env.mat %>% select(year, block)
+y <- env.mat %>% select(trt, year_trt)
+y <- data.frame(dummy(y$trt) * as.numeric(y$year_trt))
+x <- decostand(sp.mat, method = "hellinger")
+
+#mod <- rda(X = x, Y = y, Z = z)
+explanatory <- bind_cols(y, z)
+
+mod <- cca(x ~ K + N + P + Condition(year*block), data = explanatory)
+plot(mod) 
+
+drop1(mod)
+```
+
+
+
+```{r}
 cap.full <- capscale(sp.mat ~ trt * as.numeric(year_trt) + as.factor(block),
          env.mat,
          distance = distmethod)
@@ -363,6 +557,7 @@ cap.full
 screeplot(cap.full)
 varpart(sp.mat, ~ trt + as.factor(block), ~ year_trt, data = env.mat)
 ```
+
 
 ```{r, echo = FALSE}
 

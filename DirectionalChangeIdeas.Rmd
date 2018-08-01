@@ -78,8 +78,8 @@ library(lme4) # Linear mixed effects models
 library(vegan)
 
 ################################################################################
-# Loading in dataset (up to 2017 data)
-cov.long <- fread('C:/Users/ebatz/Dropbox/NutNet Data/full-cover-09-April-2018.csv',
+# Loading in dataset (April 2018 Data)
+cov.long <- fread('C:/Users/ebatzer/Dropbox/NutNet Data/full-cover-09-April-2018.csv',
                   na.strings = c('NA','NULL'))
 
 # Subsetting to just California sites
@@ -99,7 +99,9 @@ plot.sp.mat <- dcast(cov.long,site_code+year+block+plot+trt+year_trt ~ Taxon,val
                      fun.aggregate = sum,drop=T,fill=0)
 
 ################################################################################
+
 # Loading in climate data
+
 ```
 
 ### Constructing estimates of change in abundance-weighted diversity

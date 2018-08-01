@@ -1,0 +1,301 @@
+---
+title: "Nut Net 2018 Workshop"
+output: html_notebook
+---
+
+# Species-specific directional change
+
+Given that we see that multiple nutrient addition produces greater change than just single nutrient additions,
+do we expect that nutrient identity matters - does the addition of one limiting nutrient produce consistent changes in 
+species-specific directional change.
+
+What sites/blocks show consistent directional change?
+
+* There should be more consistent directional change when there is a tradeoff with nutrient enrichment strategy
+    * The more spatial heterogeneity in environmental heterogeneity, the more likelihood that different resource use strategies predominate
+    * Temporal change and its relationship?
+
+* What species are associated with directional change?
+
+Steps to analyses:
+
+```{r, message = FALSE, echo = FALSE, warning = FALSE}
+################################################################################
+### Data preprocessing
+
+# Loading necessary packages
+library(codyn) # Temporal analysis
+library(ggplot2) # Figure plotting
+library(tidyverse) # Data manipulation
+library(lubridate)
+library(data.table)
+library(vegetarian) # Exponentiated diversity indices (Hill Numbers)
+library(lme4) # Linear mixed effects models
+library(vegan)
+library(data.table)
+library(testthat)
+
+################################################################################
+# Loading in dataset (April 2018 Data)
+cov.long <- fread('C:/Users/ebatz/Dropbox/NutNet Data/full-cover-09-April-2018.csv',
+                  na.strings = c('NA','NULL'))
+
+plot.descriptions <- read.csv("C:/Users/ebatz/Dropbox/NutNet Data/all-plot-descriptions-1-December-2017.csv",
+                              stringsAsFactors = FALSE)
+
+# Subsetting to just California sites
+# site.subset <- c("mcla.us", "hopl.us", "sier.us", "elliot.us", "sedg.us",
+#                  "cdcr.us", "konz.us", "cbgb.us", "trel.us", "cdpt.us")
+
+# cov.long <- cov.long[cov.long$site_code %in% site.subset,]
+
+# Choose identifying variables
+ids <- c('site_code','year','year_trt', 'block','plot','trt')
+
+# Remove non-live percent cover esimates
+cov.long[,max_cover:=as.numeric(max_cover)] 
+cov.long <- cov.long[live==1]
+
+# Cast long into wide
+plot.sp.mat <- dcast(cov.long,site_code+year+block+plot+trt+year_trt ~ Taxon,value.var='max_cover', 
+                     fun.aggregate = sum,drop=T,fill=0)
+```
+
+# Subsetting by sites that have >= 5 years of data and removing all species with counts == 0
+
+```{r}
+
+# Selecting sites with years greater than or equal to 10
+lt_sites = plot.sp.mat %>% 
+  group_by(site_code) %>% 
+  filter(!is.na(block)) %>%
+  summarise(uniqueyears = length(unique(year))) %>%
+  filter(uniqueyears >= 5) %>%
+  select(site_code)
+
+# Filtering based on those site codes
+dat = plot.sp.mat %>% 
+  filter(site_code %in% c(lt_sites$site_code)) %>% 
+  filter(trt %in% c("N", "P", "K", "Control"))
+
+# Selecting columns with all values greater than 0
+dat = bind_cols(dat[,1:6], dat[,7:ncol(dat)][,colSums(dat[,7:ncol(dat)]) > 0])
+dat = na.omit(dat)
+
+# Binding these with dummy-variable versions of nutrient addition
+com.attr <- dat[,1:6]
+com.attr <-  inner_join(com.attr, plot.descriptions, by = c("site_code", "block", "plot"))
+com.attr$N_num = as.numeric(com.attr$N) * com.attr$year_trt
+com.attr$P_num = as.numeric(com.attr$P) * com.attr$year_trt
+com.attr$K_num = as.numeric(com.attr$K) * com.attr$year_trt
+
+# Pulling out community matrix
+com.mat <- dat[,7:ncol(dat)]
+expect_true(nrow(com.mat) == nrow(com.attr))
+```
+
+# Running permutational ANOVA
+
+```{r}
+
+# Creating list for storage
+output = list()
+# Initializing counter variables
+counter <- 1
+
+# Setting treatment as a factor (can use in other runs)
+com.attr$trt <- factor(com.attr$trt, levels = c("Control", "N", "P", "K"))
+
+# For all unique sites selected
+for(i in unique(com.attr$site_code)){
+  
+  # Subset to a single site
+  com.subset <- data.frame(com.mat)[com.attr$site_code == i,]
+  
+  # Remove all zero columns
+  com.subset = com.subset[,colSums(com.subset) > 0]
+  
+  # Pull out relevant plot attributes for each site
+  attr.subset <- data.frame(com.attr) %>% filter(site_code == i)
+  
+  # Check that these two matrices are the same size
+  expect_true(nrow(attr.subset) == nrow(com.subset))
+  
+  # If there's only 1 block per site, add no block interactions
+  if(length(unique(attr.subset$block)) == 1){ 
+  mod_anov <- adonis(decostand(com.subset, method = "total") ~ trt * as.factor(year_trt) + as.factor(year_trt), 
+                     #strata = as.factor(attr.subset$block), 
+                      permutations = 99,
+                      data = attr.subset,
+                      method = "bray")
+  }else{ # If there is more than one block, add block interactions
+  mod_anov <- adonis(decostand(com.subset, method = "total") ~ trt * as.factor(year_trt)  +
+                       trt * as.factor(block) + 
+                       as.factor(block) * as.factor(year_trt), 
+                     #strata = as.factor(attr.subset$block), 
+                      permutations = 99,
+                      data = attr.subset,
+                      method = "bray")
+  }
+  
+  # Saving ouput
+  output[[counter]] = list(sitename = i,
+                           aovtable = mod_anov$aov.tab,
+                           sitescores = mod_anov$coef.sites,
+                           specscores = mod_anov$coefficients)
+  
+  # Update counter
+  counter = counter + 1
+}
+
+# Binds coefficients from each site together:
+coefs = data.frame()
+for(sites in 1:length(output)){
+  if(sites == 1){
+    coefs = data.frame(t(output[[sites]]$specscores))
+    coefs$species = rownames(coefs)
+    coefs$site = rep(output[[sites]]$sitename, nrow(coefs))
+  }else{
+    tojoin =  data.frame(t(output[[sites]]$specscores))
+    tojoin$species = rownames(tojoin)
+    tojoin$site = rep(output[[sites]]$sitename, nrow(tojoin))
+    coefs = bind_rows(coefs, tojoin)
+  }
+}
+```
+
+# Plotting relationships of axis loadings
+```{r}
+coefs %>%
+  filter(X.Intercept. > .05) %>%
+  ggplot(aes(x = trt1, 
+             y = trt2,
+         fill = site)) +
+  geom_hline(yintercept = 0) + 
+  geom_point(shape = 21, size = 3) +
+  # stat_smooth(method = "lm", se = FALSE, fullrange = TRUE) +
+  stat_smooth(method = "lm", aes(fill = NULL), fullrange = TRUE) +
+  guides(fill = FALSE) +
+  ggtitle("N / P Change") +   
+  ylim(-.15, .15) +
+  xlim(-.15, .15) +
+  xlab("Nitrogen Effect") +
+  ylab("Phosphorous Effect")
+  #facet_wrap(~site)
+
+coefs %>%
+  filter(X.Intercept. > .05) %>%
+  ggplot(aes(x = trt1, 
+             y = trt3,
+         fill = site)) +
+  geom_hline(yintercept = 0) + 
+  geom_point(shape = 21, size = 3) +
+  # stat_smooth(method = "lm", se = FALSE, fullrange = TRUE) +
+  stat_smooth(method = "lm", aes(fill = NULL), fullrange = TRUE) +
+  guides(fill = FALSE) +
+  ggtitle("N / K Change") + 
+  ylim(-.15, .15) +
+  xlim(-.15, .15) +
+  xlab("Nitrogen Effect") +
+  ylab("Phosphorous Effect")
+
+coefs %>%
+  filter(X.Intercept. > .05) %>%
+  ggplot(aes(x = trt2, 
+             y = trt3,
+         fill = species)) +  
+  geom_hline(yintercept = 0) + 
+  geom_point(shape = 21, size = 3) +
+  geom_smooth(method = "lm", se = FALSE, fullrange = TRUE, aes(fill = NULL)) +
+  guides(fill = FALSE) +
+  ggtitle("K / P Change") +
+  ylim(-.15, .15) +
+  xlim(-.15, .15)
+
+
+length(unique(data.frame(coefs %>%
+  filter(X.Intercept. > .05) %>% select(species))$species)) / nrow(coefs %>%
+  filter(X.Intercept. > .05))
+
+output[[1]][c(1,2)]
+
+
+```
+
+```{r}
+# Principal comoponents of proportional change:
+newcoefs = coefs %>% filter(X.Intercept. > .05)
+
+hist((newcoefs %>% group_by(site) %>% summarise(count = n()))$count, breaks = 6)
+
+spec_pca = princomp(newcoefs[,c(2,3,4)])
+plot(spec_pca)
+(spec_pca$sdev[1] + spec_pca$sdev[2] ) / sum(spec_pca$sdev)  
+biplot(spec_pca, choices = c(1,2))
+spec_pca$loadings
+levels(com.attr$trt)
+```
+
+```{r}
+# x, y, z variables
+x <- coefs$trt1
+y <- coefs$trt2
+z <- coefs$trt3
+
+# Compute the linear regression (z = ax + by + d)
+fit <- loess(z ~ x + y, span = 1)
+
+# predict values on regular xy grid
+grid.lines = 26
+x.pred <- seq(min(x), max(x), length.out = grid.lines)
+y.pred <- seq(min(y), max(y), length.out = grid.lines)
+xy <- expand.grid( x = x.pred, y = y.pred)
+z.pred <- matrix(predict(fit, newdata = xy), 
+                 nrow = grid.lines, ncol = grid.lines)
+
+# fitted points for droplines to surface
+fitpoints <- predict(fit)
+
+# scatter plot with regression plane
+scatter3D(x, y, z, pch = 18, cex = .5, 
+    theta = 45, phi = 45, ticktype = "detailed",
+    xlab = "N", ylab = "P", zlab = "K",
+    zlim = c(-.2, .2), ylim = c(-.2, .2), xlim = c(-.2, .2),
+    surf = list(x = x.pred, y = y.pred, z = z.pred, facets = NA, fit = fitpoints), 
+    main = "Nutrient Responses")
+```
+
+# What species to keep?
+
+Must filter to only include the species that are present in:
+* Most plots?
+* All plots?
+* Greater than X percent cover?
+
+```{r}
+toselect = cov.long %>%
+  filter(live == 1, trt %in% c("Control", "N", "P", "K")) %>%
+  group_by(site_name, block, year_trt, Taxon) %>%
+  summarise(mcov = mean(max_cover),
+            occ = n(),
+            pres = paste0(unique(trt), collapse = "", sep = "_"),
+            ntrts = length(unique(trt)))
+
+```
+
+How to fit models?
+* Treatment as numeric?
+* Block as a separate factor (or as strata?) 
+* Block interactions
+
+# How to filter:   
+```{r}
+library(smapr)
+require(smapr)
+install.packages("smapr")
+source("https://bioconductor.org/biocLite.R")
+biocLite("rhdf5")
+
+#specfilter = 
+```
+
