@@ -1,0 +1,177 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# 0. Observational data analysis
+
+## Sites: 
+
+Observational data - 67 sites with pretrt soil data
+
+
+
+## Questions:
+a. 	Do we see differences in species occupancy within sites just based on observational data and variation in soil resources? Drawing on Lewandowska 2016 and the observational side of Harpole 2007.
+
+Ordination of observational species matrix and seeing the explanatory power of Z-scores in variation of N,P,K.
+
+b.	Start with observations – here’s a bunch of sites with 30 plots, do you see some of the same kind of trade-offs among species in plots within a block?
+
+c. 	Start with this + when we perturb it, is there a greater response?
+
+## Response:
+
+Log-response ratio of community variables in observational plots
+
+## Outcomes:
+
+
+## Analysis:
+
+Reading in data and subsetting data files to include sites that contain pre-treatment soil data.
+
+```{r}
+################################################################################
+### Data preprocessing
+
+# Loading necessary packages
+library(ggplot2) # Figure plotting
+library(tidyverse) # Data manipulation
+library(vegetarian) # Exponentiated diversity indices (Hill Numbers)
+library(lme4) # Linear mixed effects models
+library(vegan)
+library(data.table)
+library(testthat)
+
+################################################################################
+# Loading in dataset (April 2018 Data)
+cov.long <- fread('C:/Users/ebatz/Dropbox/NutNet Data/full-cover-09-April-2018.csv',
+                  na.strings = c('NA','NULL'))
+
+plot.descriptions <- read.csv("C:/Users/ebatz/Dropbox/NutNet Data/all-plot-descriptions-1-December-2017.csv",
+                              stringsAsFactors = FALSE)
+
+
+soil.chars <- read.csv("C:/Users/ebatz/Dropbox/NutNet Data/comb-by-plot-clim-soil-diversity-09-Apr-2018.csv",
+                              stringsAsFactors = FALSE)
+
+# Choose identifying variables
+ids <- c('site_code','year','year_trt', 'block','plot','trt')
+
+# Remove non-live percent cover esimates
+cov.long[,max_cover:=as.numeric(max_cover)] 
+cov.long <- cov.long[live==1]
+
+# Cast long into wide
+plot.sp.mat <- dcast(cov.long,site_code+year+block+plot+trt+year_trt ~ Taxon,value.var='max_cover', 
+                     fun.aggregate = sum,drop=T,fill=0)
+
+
+# Subset by soil characteristics (must include pre-treatment data)
+pretrt = soil.chars %>%   
+  filter(year_trt == 0) %>%
+  group_by(site_code, block) %>%
+  summarise(ndat = sum(!is.na(pct_N))) %>%
+  filter(ndat > 0)
+
+# Number of sites with pretrt soil data:
+length(unique(pretrt$site_code))
+
+# Subsetting species matrix by these site codes
+soil.chars = soil.chars[soil.chars$site_code %in% unique(pretrt$site_code), ] %>% filter(year_trt == 0)
+plot.sp.mat = plot.sp.mat[plot.sp.mat$site_code %in% unique(pretrt$site_code), ]
+plot.sp.mat = plot.sp.mat %>% filter(year_trt == 0)
+
+soil.means = soil.chars %>% group_by(site_code, block) %>% 
+  select(c("pct_C", "pct_N", "ppm_P", "ppm_K", "ppm_Ca", "ppm_Mg", "ppm_S", 
+           "ppm_Na", "ppm_Zn", "ppm_Mn", "ppm_Fe", "ppm_Cu", "ppm_B", "pH")) %>%
+  summarise_all(funs(mean = mean,
+                     sd = sd))
+
+soil.zscores = soil.chars %>% group_by(site_code, block, plot, trt, year, year_trt) %>% 
+  select(c("plot", "pct_C", "pct_N", "ppm_P", "ppm_K", "ppm_Ca", "ppm_Mg", "ppm_S", 
+           "ppm_Na", "ppm_Zn", "ppm_Mn", "ppm_Fe", "ppm_Cu", "ppm_B", "pH")) %>%
+  left_join(soil.means, by = c("site_code", "block")) %>%
+  mutate(C_z = (pct_C - pct_C_mean) / pct_C_sd,
+         N_z = (pct_N - pct_N_mean) / pct_N_sd,
+         P_z = (ppm_P - ppm_P_mean) / ppm_P_sd,
+         K_z = (ppm_K - ppm_K_mean) / ppm_K_sd,
+         Ca_z = (ppm_Ca - ppm_Ca_mean) / ppm_Ca_sd,
+         Mg_z = (ppm_Mg - ppm_Mg_mean) / ppm_Mg_sd,
+         S_z = (ppm_S - ppm_S_mean) / ppm_S_sd,
+         Na_z = (ppm_Na - ppm_Na_mean) / ppm_Na_sd,
+         Zn_z = (ppm_Zn - ppm_Zn_mean) / ppm_Zn_sd,
+         Mn_z = (ppm_Mn - ppm_Mn_mean) / ppm_Mn_sd,
+         Fe_z = (ppm_Fe - ppm_Fe_mean) / ppm_Fe_sd,
+         Cu_z = (ppm_Cu - ppm_Cu_mean) / ppm_Cu_sd,
+         B_z = (ppm_B - ppm_B_mean) / ppm_B_sd,
+         pH_z = (pH - pH_mean) / pH_sd
+         )
+
+alldat = inner_join(na.omit(soil.zscores), plot.sp.mat, by = c("site_code", "block", "plot", "year", "trt", "year_trt"))
+alldat = bind_cols(alldat[,1:61], alldat[,62:ncol(alldat)][,colSums(alldat[,62:ncol(alldat)]) > 0])
+
+# Subsetting data into two matrices
+com.attr = alldat[,1:61]
+com.mat = alldat[,62:ncol(alldat)]
+
+# Checking dataframes
+# head(com.mat)
+# head(com.attr)
+```
+
+# Running permutational ANOVA
+
+```{r}
+
+# Creating list for storage
+output = list()
+# Initializing counter variables
+counter <- 1
+
+# For all unique sites selected
+for(i in unique(com.attr$site_code)){
+
+  # Subset to a single site
+  com.subset <- com.mat[com.attr$site_code == i,]
+  
+  # Remove all zero columns
+  com.subset = com.subset[,colSums(com.subset) > 0]
+
+  # Pull out relevant plot attributes for each site
+  attr.subset <- data.frame(com.attr) %>% filter(site_code == i)
+  
+  # Check that these two matrices are the same size
+  expect_true(nrow(attr.subset) == nrow(com.subset))
+  
+  # If there's only 1 block per site, add no block interactions
+  if(length(unique(attr.subset$block)) == 1){ 
+  mod_anov <- adonis(decostand(com.subset, method = "total") ~ N_z + C_z + P_z + K_z, 
+                      permutations = 99,
+                      data = attr.subset,
+                      method = "bray")
+  }else{ # If there is more than one block, add block interactions
+  mod_anov <- adonis(decostand(com.subset, method = "total") ~ (N_z + C_z + P_z + K_z) * as.factor(block), 
+                      strata = as.factor(attr.subset$block), 
+                      permutations = 99,
+                      data = attr.subset,
+                      method = "bray")
+  }
+  
+  # Saving ouput
+  output[[counter]] = list(sitename = i,
+                           aovtable = mod_anov$aov.tab,
+                           sitescores = mod_anov$coef.sites,
+                           specscores = mod_anov$coefficients)
+  
+  # Update counter
+  counter = counter + 1
+}
+
+output[[26]][2]
+```
+
+
+
+ 

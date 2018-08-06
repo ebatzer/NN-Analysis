@@ -1,6 +1,8 @@
 ---
 title: "Nut Net 2018 Workshop"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
 # Species-specific directional change
@@ -34,6 +36,7 @@ library(lme4) # Linear mixed effects models
 library(vegan)
 library(data.table)
 library(testthat)
+library(plot3D)
 
 ################################################################################
 # Loading in dataset (April 2018 Data)
@@ -183,6 +186,9 @@ coefs %>%
   ylab("Phosphorous Effect")
   #facet_wrap(~site)
 
+ggsave("N-P Corr.jpeg", height = 7, width = 10)
+
+
 coefs %>%
   filter(X.Intercept. > .05) %>%
   ggplot(aes(x = trt1, 
@@ -199,6 +205,8 @@ coefs %>%
   xlab("Nitrogen Effect") +
   ylab("Phosphorous Effect")
 
+ggsave("N-K Corr.jpeg", height = 7, width = 10)
+
 coefs %>%
   filter(X.Intercept. > .05) %>%
   ggplot(aes(x = trt2, 
@@ -206,11 +214,12 @@ coefs %>%
          fill = species)) +  
   geom_hline(yintercept = 0) + 
   geom_point(shape = 21, size = 3) +
-  geom_smooth(method = "lm", se = FALSE, fullrange = TRUE, aes(fill = NULL)) +
+  geom_smooth(method = "lm", fullrange = TRUE, aes(fill = NULL)) +
   guides(fill = FALSE) +
   ggtitle("K / P Change") +
   ylim(-.15, .15) +
   xlim(-.15, .15)
+ggsave("K-P Corr.jpeg", height = 7, width = 10)
 
 
 length(unique(data.frame(coefs %>%
@@ -231,8 +240,8 @@ hist((newcoefs %>% group_by(site) %>% summarise(count = n()))$count, breaks = 6)
 spec_pca = princomp(newcoefs[,c(2,3,4)])
 plot(spec_pca)
 (spec_pca$sdev[1] + spec_pca$sdev[2] ) / sum(spec_pca$sdev)  
-biplot(spec_pca, choices = c(1,2))
-spec_pca$loadings
+biplot(spec_pca, choices = c(1,2), cex = .5)
+?biplot
 levels(com.attr$trt)
 ```
 
@@ -257,12 +266,16 @@ z.pred <- matrix(predict(fit, newdata = xy),
 fitpoints <- predict(fit)
 
 # scatter plot with regression plane
+jpeg(filename = "ResposneSurface.jpeg", height = 500, width = 800)
+
 scatter3D(x, y, z, pch = 18, cex = .5, 
     theta = 45, phi = 45, ticktype = "detailed",
     xlab = "N", ylab = "P", zlab = "K",
     zlim = c(-.2, .2), ylim = c(-.2, .2), xlim = c(-.2, .2),
     surf = list(x = x.pred, y = y.pred, z = z.pred, facets = NA, fit = fitpoints), 
-    main = "Nutrient Responses")
+    main = "N-P-K Response Surface")
+
+dev.off()
 ```
 
 # What species to keep?
@@ -272,30 +285,85 @@ Must filter to only include the species that are present in:
 * All plots?
 * Greater than X percent cover?
 
+Switch to log-response ratio (detrended?)
+
 ```{r}
 toselect = cov.long %>%
   filter(live == 1, trt %in% c("Control", "N", "P", "K")) %>%
-  group_by(site_name, block, year_trt, Taxon) %>%
+  group_by(site_code, Taxon) %>%
   summarise(mcov = mean(max_cover),
             occ = n(),
             pres = paste0(unique(trt), collapse = "", sep = "_"),
             ntrts = length(unique(trt)))
 
+selected = toselect %>% filter(ntrts == 4 & mcov > 5)
+
+selected$Taxon <- gsub(" ", ".", selected$Taxon)
+
+newcoefs = inner_join( coefs, selected, by = c("site" = "site_code", "species" = "Taxon"))
+
+
 ```
 
+
+
+# Plotting relationships of axis loadings
+```{r}
+
+newcoefs %>%
+  filter(X.Intercept. > .05) %>%
+  ggplot(aes(x = trt1, 
+             y = trt2,
+         fill = site)) +
+  geom_hline(yintercept = 0) + 
+  geom_point(shape = 21, size = 3) +
+  # stat_smooth(method = "lm", se = FALSE, fullrange = TRUE) +
+  stat_smooth(method = "lm", aes(fill = NULL), fullrange = TRUE) +
+  guides(fill = FALSE) +
+  ggtitle("N / P Change") +   
+  ylim(-.15, .15) +
+  xlim(-.15, .15) +
+  xlab("Nitrogen Effect") +
+  ylab("Phosphorous Effect")
+  #facet_wrap(~site)
+
+newcoefs %>%
+  filter(X.Intercept. > .05) %>%
+  ggplot(aes(x = trt1, 
+             y = trt3,
+         fill = site)) +
+  geom_hline(yintercept = 0) + 
+  geom_point(shape = 21, size = 3) +
+  # stat_smooth(method = "lm", se = FALSE, fullrange = TRUE) +
+  stat_smooth(method = "lm", aes(fill = NULL), fullrange = TRUE) +
+  guides(fill = FALSE) +
+  ggtitle("N / K Change") + 
+  ylim(-.15, .15) +
+  xlim(-.15, .15) +
+  xlab("Nitrogen Effect") +
+  ylab("Phosphorous Effect")
+
+newcoefs %>%
+  filter(X.Intercept. > .05) %>%
+  ggplot(aes(x = trt2, 
+             y = trt3,
+         fill = site)) +  
+  geom_hline(yintercept = 0) + 
+  geom_point(shape = 21, size = 3) +
+  geom_smooth(method = "lm", se = FALSE, fullrange = TRUE, aes(fill = NULL)) +
+  guides(fill = FALSE) +
+  ggtitle("K / P Change") +
+  ylim(-.15, .15) +
+  xlim(-.15, .15)
+```
 How to fit models?
 * Treatment as numeric?
 * Block as a separate factor (or as strata?) 
 * Block interactions
 
-# How to filter:   
 ```{r}
-library(smapr)
-require(smapr)
-install.packages("smapr")
-source("https://bioconductor.org/biocLite.R")
-biocLite("rhdf5")
-
-#specfilter = 
+length(unique(newcoefs$site))
 ```
+
+
 
