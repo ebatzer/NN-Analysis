@@ -1,0 +1,44 @@
+﻿Title: Examining resource-use tradeoffs underlying niche dimensionality in NutNet
+
+Lead Authors: Evan Batzer, Siddharth Iyengar
+
+Contact Email: ebatzer@ucdavis.edu, iyeng029@umn.edu            
+
+Keywords: niche dimensionality, resource use, tradeoffs
+
+Response variables: Species cover
+
+Explanatory variables: Pre-treatment soil nutrient profiles, climate data, phylogenetic data,biomass limitation.
+
+Data: Community matrix for all sites with > 5 years of data. 
+
+
+Abstract:
+It is well understood that multiple nutrient limitation structures many plant communities, wherein plant growth and survival is determined by competition across a series of shared resource axes. Niche dimensionality (Harpole et al. 2007, 2016) is a mechanism of coexistence predicated on species-specific trade-offs in resource use. While niche dimensionality has been explored and observed at the community scale, there is a limited exploration of the mechanisms that drive the development of these species-level tradeoffs and their association with certain species characteristics.
+For resource co-limitation and species-specific tradeoffs in resource use to be present within a community, we hypothesize that two key characteristics must be met:
+1. Sufficient species and functional diversity to contain variation in resource use
+2. Significant spatial variation in environmental resource availability to be a driver of community structure. 
+        Subsequently, the strength of trade-offs in resource use may be correlated with species characteristics and life history strategies - greater demand for phosphorus or nitrogen and response to enrichment, for example, may correlate with legume and graminoid functional group identity, respectively. Assessing global patterns of resource use tradeoffs, environmental parameters that are correlated with the strength of these tradeoffs, and associated species characteristics sheds light onto key mechanisms that may structure niche dimensionality in a global context.
+
+
+        To evaluate these resource use tradeoffs, we aim to explore both experimental and observational plot data from the Nutrient Network to address three key aims:
+
+
+1. To what degree do soil concentrations of nitrogen, phosphorus, and potassium drive spatial variation in community structure (based on the observational dataset, in the same manner as Harpole and Tilman. 2007)?
+2. Following single-nutrient enrichment treatments (N, P, and Kμ), do species present trade-offs in abundance responses? What site-level characteristics best explain the strength of observed trade-offs?
+3. Are species affinities for different resource treatments correlated to functional and phylogenetic characteristics? 
+
+
+        Preliminary analysis suggests the presence of network-wide trade-offs in response to nitrogen, phosphorus, and potassium (+ micronutrient) enrichment, in which positive responses to one single-nutrient treatment were weakly correlated with negative responses to other resources.
+
+
+
+Citations:
+Harpole, W.S. and Tilman, D., 2007. Grassland species loss resulting from reduced niche dimension. Nature, 446(7137), p.791.
+Harpole, W.S., Sullivan, L.L., Lind, E.M., Firn, J., Adler, P.B., Borer, E.T., Chase, J., Fay, P.A., Hautier, Y., Hillebrand, H. and MacDougall, A.S., 2016. Addition of multiple limiting resources reduces grassland diversity. Nature, 537(7618), p.93.
+Hodapp, D., Borer, E.T., Harpole, W.S., Lind, E.M., Seabloom, E.W., Adler, P.B., Alberti, J., Arnillas, C.A., Bakker, J.D., Biederman, L. and Cadotte, M., 2018. Spatial heterogeneity in species composition constrains plant community responses to herbivory and fertilisation. Ecology letters.
+
+
+
+
+
