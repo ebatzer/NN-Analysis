@@ -1,5 +1,5 @@
 ---
-title: "0. Observational data analysis"
+title: "Observational Data Analysis"
 output:
   prettydoc::html_pretty:
     highlight: github
@@ -43,7 +43,7 @@ Yielding 38 sites total for analysis.
 
 ## Analysis:
 
-Reading in data and subsetting data files to include sites that contain pre-treatment soil data.
+(Hidden in markdown output -- see source file)
 
 ```{r, include = FALSE}
 ################################################################################
@@ -154,8 +154,6 @@ com.mat = alldat[,62:ncol(alldat)]
 # head(com.mat)
 # head(com.attr)
 ```
-
-### What fraction of variance is explained by soil resource axes:
 
 ```{r, include = FALSE}
 # For each site in the dataset:

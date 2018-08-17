@@ -1,9 +1,11 @@
 ---
-title: "0. Observational data analysis"
+title: "R Notebook"
 output:
   prettydoc::html_pretty:
     highlight: github
 ---
+
+# 0. Observational data analysis
 
 Compiled on `r date()`
 
