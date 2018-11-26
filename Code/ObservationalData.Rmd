@@ -213,7 +213,7 @@ for(i in unique(com.attr$site_code)){
 
 ### Are measures of N, P, and K correlated with one another?
 
-Yes, Z-scores of soil resources seem to be generally weakly correlated with one another within a given site, particularly with respect to P and K.
+For this step, I've simply calculated correlations between within-site Z-scores of N, P, and K within each plot. Z-scores of soil resources seem to be generally weakly correlated with one another within a given site, particularly with respect to P and K. Given this fact, I think our statistical power in detecting trade-offs may be a little limited.
 
 ```{r, echo = FALSE}
 cat(paste("N-P Z-score Corr:",cor(com.attr$N_z, com.attr$P_z),
@@ -222,6 +222,15 @@ cat(paste("N-P Z-score Corr:",cor(com.attr$N_z, com.attr$P_z),
 ```
 
 ### What sites exhibit the greatest proportion of community variance explained by soil nutrient Z-scores?
+
+Here I've run a CCA (may have some favorable properties relative to RDA, but functions similarly) on each site, which should allow us to determine:
+
+* What fraction of the overall variance in observational community composition we can attribute to variation in soil N, P, and K (and to test this fraction with ANOVA)
+* What is the estimated relationship between community composition and soil characteristics (plot scores on N, P, and K axes)
+
+Because I've subset our data to just those plots containing 30 plots in three blocks, these comparisons should be done with very similar datasets - similar to Jon Bakker's approach.
+
+Here we see that a number of sites have significant fractions of community variance that can be explained by soil variables in CCA, and there's quite a range therein.
 
 ```{r, echo = FALSE}
 
@@ -268,6 +277,8 @@ pvals %>% arrange(varfrac) %>% ggplot(aes(x = site,
 ```
 
 ### What sites show the greatest amount of variance attributable to soil resource variation?
+
+Relating this variance fraction to CV's of N, P, and K shows an interesting, although not unexpected, pattern where the amoung of variance explained by soil nutrient Z-scores was correlated with the CV of nitrogen.
 
 ```{r, echo = FALSE}
 p1 = left_join(pvals, soil.means, by = c("site" = "site_code")) %>%
@@ -319,6 +330,8 @@ car::Anova(lm(varfrac ~ CV_n * CV_p * CV_k, data = dat), type=2)
 
 ### How correlated are community axis loadings of of N, P and K to one another? Are these relationships negative signalling some sort of resource use trade-off, or positive, suggesting that communities respond relatively uniformly to increased productivity?
 
+There's quite a bit of variation in the slope of these relationships. Some show very strong positive relationships, while others are more negative.
+
 ```{r, echo = FALSE }
 p1 <- coefs %>% 
   ggplot(aes(x = N_z, y = P_z, color = site)) +
@@ -352,6 +365,10 @@ cat(paste("N-P Corr:", cor(coefs$N_z, coefs$P_z),
 ```
 
 ### Describing the above relationships with SMAs
+
+I've repurposed your code here to explain these same relationships using SMAs. As before, significant relationships are in black, non-significant relationships are in grey. Generally, estimated community responses to N, P, and K are positive, though there may be a few negative relationships. Only one of these appears to be significant, and may be very outlier driven. Would be worth to check on these soil measurements. 
+
+As an aside, the SMAs don't seem to ever assume a flat line. Is this a feature of the method? Or of the data itself?
 
 ```{r, echo = FALSE}
 library(smatr)

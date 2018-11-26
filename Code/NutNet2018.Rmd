@@ -92,7 +92,7 @@ com.attr$N_num = as.numeric(com.attr$N) * com.attr$year_trt
 com.attr$P_num = as.numeric(com.attr$P) * com.attr$year_trt
 com.attr$K_num = as.numeric(com.attr$K) * com.attr$year_trt
 
-# Pulling out community matrix
+# Pulling out community matrixW
 com.mat <- dat[,7:ncol(dat)]
 expect_true(nrow(com.mat) == nrow(com.attr))
 ```
@@ -266,7 +266,7 @@ z.pred <- matrix(predict(fit, newdata = xy),
 fitpoints <- predict(fit)
 
 # scatter plot with regression plane
-jpeg(filename = "ResposneSurface.jpeg", height = 500, width = 800)
+jpeg(filename = "ResponseSurface.jpeg", height = 500, width = 800)
 
 scatter3D(x, y, z, pch = 18, cex = .5, 
     theta = 45, phi = 45, ticktype = "detailed",

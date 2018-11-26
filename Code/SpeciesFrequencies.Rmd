@@ -1,0 +1,155 @@
+---
+title: "Species Frequencies - NutNet"
+output: html_notebook
+---
+
+```{r, include=FALSE}
+library(smatr)
+library(tidyverse)
+library(data.table); library(dtplyr)
+
+# Read biomass data
+biomass_data <- fread('C:/Users/ebatzer/Dropbox/NutNet Data/comb-by-plot-31-August-2018.csv',
+                  stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+
+biomass_data$site_code <- factor(biomass_data$site_code)
+biomass_data$trt <- factor(biomass_data$trt)
+
+#Choose sites with at least 3 years of data
+sites <- biomass_data %>% 
+  group_by(site_code,region,first_nutrient_year) %>% 
+  summarise(yrs.data = length(unique(year)),fyear = min(year), lyear = max(year)) %>% 
+  arrange(yrs.data)
+
+sites.long <- as.character(sites[yrs.data >= 3,`site_code`])
+rm(sites)
+
+bmass <- biomass_data[site_code %in% sites.long]
+
+cover <- fread('C:/Users/ebatzer/Dropbox/NutNet Data/full-cover-31-August-2018.csv',
+               stringsAsFactors = FALSE,
+               na.strings = c('NA','NULL'))
+cover.long <- cover[site_code%in%c(sites.long) & live==1,]
+cover.long <- left_join(cover.long,distinct(bmass[,.(`site_code`,`region`)]))
+cover.long <- cover.long[ , max_cover := as.numeric(max_cover)]
+
+#Choose plots with at least 3 years of data
+## This takes care of a few sites that have strange plot configurations,
+## like sgs.us
+site.plots.keep <- cover.long %>% 
+  group_by(site_code,block,plot,trt) %>% 
+  summarise(yrs.data = length(unique(year))) %>% 
+  filter(yrs.data>=3)
+
+## Some sites have multiple control plots in a block.
+## Choosing only the lowest numbered plot belong to a treatment in each block.
+site.plots.keep <- left_join(site.plots.keep,
+                             site.plots.keep %>% group_by(site_code,block,trt) %>% 
+                               summarize(min.plot = min(plot))) %>% 
+  filter(plot==min.plot) %>% 
+  select(-min.plot,-yrs.data)
+
+cover.long <- left_join(site.plots.keep,cover.long)
+cover.long <- droplevels(cover.long) #cover.long$site_code <- factor(cover.long$site_code)
+rm(site.plots.keep)
+
+
+head(cover.long)
+```
+
+# Summarising species frequencies and relative abundances
+
+```{r, include = FALSE}
+specobs = data.frame(cover.long) %>% 
+  filter(trt %in% c("Control", "N", "P", "K")) %>%
+  group_by(site_code, block, Taxon) %>%
+  summarise(totalobs = n(),
+            c_obs = sum(trt == "Control"),
+            n_obs = sum(trt == "N"),
+            k_obs = sum(trt == "K"),
+            p_obs = sum(trt == "P"),
+            meancov = mean(max_cover),
+            mc_control = mean(max_cover[trt == "Control"]),
+            mc_N = mean(max_cover[trt == "N"]),
+            mc_K = mean(max_cover[trt == "K"]),
+            mc_P = mean(max_cover[trt == "P"]))
+
+trtcov <- data.frame(cover.long) %>% 
+  filter(trt %in% c("Control", "N", "P", "K")) %>% 
+  filter(year_trt == 0) %>% ungroup %>% select(-subplot) %>% 
+  select(-plot) %>% 
+  spread(key = trt, value = max_cover, fill=0) %>% 
+  mutate(nonzero = as.numeric(Control > 0) + as.numeric(N > 0) + as.numeric(P > 0) + as.numeric(K > 0))
+
+specobs = left_join(specobs, trtcov %>% 
+                      select("site_code", "block", "Taxon", "Control", "N", "P", "K", "nonzero") %>% 
+                      rename("fy_control" = "Control",
+                             "fy_N" = "N",
+                             "fy_P" = "P",
+                             "fy_K" = "K")) %>% 
+  replace(., is.na(.), 0) %>%
+  left_join(cover.long %>% 
+              group_by(site_code,block) %>% 
+              summarise(yrs.data = length(unique(year))))
+  
+
+head(specobs)
+```
+
+# What fraction of observations do species occupy?
+
+Following graph shows the average cover of a species with proportional representation in the total number of observations in each block over time. 
+
+As we might expect, a very large number of species are not consistently represented in each site. Curiously, these aren't all rare species -- there are a number with relatively high mean abundances that are still only present in a very small fraction of observations. Generally, a species needs to have a mean %cover of roughly 10 percent to be represented in all observations.
+
+```{r}
+p = specobs %>% ggplot(aes(x = log10(meancov),
+                       y = totalobs / (yrs.data * 4),
+                       color = site_code)) +
+  geom_point(alpha = .1) +
+  guides(color = "none") +
+  stat_smooth(se = FALSE,
+              aes(color = NULL)) +
+  xlab("Log10 Cover") +
+  ylab("Proportion of Plots with Observations") +
+  ggtitle("Plot Occupancy by Cover, Colored by Site")
+
+for(i in seq(.1,.9, by = .1)){
+    p = p + geom_hline(yintercept = i, color = "black") +
+      geom_text(x = -1.2, y = i + .03, 
+                label = paste(round(nrow(specobs %>% filter(totalobs / (yrs.data * 4) >= i)) / nrow(specobs), 2),
+                              "data contained at cutoff", i),
+                color = "black")
+  }
+p
+```
+
+# Occupancy at Year 0
+
+It may be problematic if many species are not uniformly represented in all plots in year 0 if one is using the formula $Effect= log(\bar{x}_{i} / \bar{x}_{0})$, as calculated effects can be highly sensitive to whatever coefficient is used to render the LRR calculatable in situations where $\bar{x}_{0}$ is 0.
+
+Here, we see that over 75% of the species found in our dataset fail to be represented in the first year of sampling - many calculations, then, will be largely dependent on what we choose as our correction constant. In Eric's paper, this was 0.1 - the minimum value found in some datasets, but a minimum cover of 1 might be more reasonable. "1" is the correction constant used in the recent legumes paper. 
+
+```{r}
+p = specobs %>% ggplot(aes(x = log10(meancov),
+                       y = nonzero,
+                       color = site_code)) +
+  geom_point(alpha = .1) +
+  guides(color = "none") +
+  stat_smooth(se = FALSE,
+              aes(color = NULL)) +
+  xlab("Log10 Cover") +
+  ylab("Plots (of 4 treatments) with Observations at Year Zero ") +
+  ggtitle("Plot Occupancy at Year 0, Colored by Site")
+
+for(i in seq(1, 4, by = 1)){
+    p = p + geom_hline(yintercept = i, color = "black") +
+      geom_text(x = -1.2, y = i + .1, 
+                label = paste(round(nrow(specobs %>% filter(nonzero >= i)) / nrow(specobs), 2),
+                              "data contained at cutoff", i),
+                color = "black")
+  }
+
+p
+```

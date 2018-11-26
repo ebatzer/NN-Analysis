@@ -1,0 +1,450 @@
+---
+title: "Vector Analysis"
+author: "Evan Batzer"
+date: "November 8, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(smatr); library(testthat); library(vegan)
+library(tidyverse); library(fastDummies)
+library(data.table); library(dtplyr)
+```
+
+Compiled on `r date()`
+
+# Fertilization Vector Analysis
+
+## Results of statistical consultation
+
+Per discussions with Neil Willits, the two different ways that I could try to 
+analyze the nutrient enrichment tradeoff include:
+
+* Conducting a PCA on each site and trying to evaluate nutrient enrichment
+change as a linear model. In this case, we have Y = PC1 score (or some other
+principal component axis), and $$Y = \mu + \beta_i t + f_i(t)$$, where $\beta_i$ 
+is the effect of nutrient enrichment over time and $f_i$ is a nonlinear term that 
+reflects the fact that the relationship between time and response isn't apt to be linear.
+
+    * To evaluate the tradeoff between nutrient addition treatments (or if this surface
+    exists at all!), we can compare the values of the beta coefficient. For example,
+    $\beta_N$ - $\beta_P$ is equal to the tradeoff on this axis. The more negative
+    value this is, the greater of a tradeoff we see.
+    
+    * However, I'm not crazy about this approach, in large part because of the
+    difficulty in picking the appropriate principal components. How can we standardize
+    this process over multiple sites? Without running the analysis over all of the
+    total variation between sites, this is not clear to me.
+    
+* Another way to do this analysis is quite similar to what we had talked about in 
+our last meeting. But rather than actually calculating the multivariate angle by
+the formula:
+$$\cos (\theta) = \frac{(\vec{V_N} \cdot \vec{V_P})}{\left\lVert\vec{V_N}
+\right\rVert \left\lVert\vec{V_P}\right\rVert}$$ we can instead just focus on the dot
+product itself, or the ratio relative to the magnitude of each vector. 
+
+    * Neil suggested that the computation that derives the angle $\theta$ can be
+    a little unstable. Focusing on the dot product (if we divide by the magnitude
+    or convert to unit length) can give us a value between -1 and 1, which indicates 
+    travel in either the same or opposite directions.
+    
+    * I like this approach more, because it doesn't rely on a dimensionality reduction, or
+    a summary statistic like grass/forb/legume cover. 
+  
+## PCA Analysis
+
+TO DO 
+
+## PermANOVA analysis
+
+__Steps:__
+
+1. Run permANOVA for each site, specifying:
+
+    * Permutations only within blocks
+    * Model formula of Y ~ Year + Average Treatment Effect
+        * Can also specify a linear term of treatment, or variation across years
+        
+2. Summarize this data by tabulating each time the permANOVA produces significant
+results. Which sites show community change by N, P, and K? Should we just subset
+to these sites with significant results?
+
+3. Extract vectors of community change in response to N, P, and K.
+
+  * Also attach whether this estimated effect was significant
+  * Standardize to unit length?
+
+4. Calculate the dot product for each pairwise set of vectors. Store this value
+(should likely be roughly bounded between -1 and 1)
+
+5. To establish which sorts of sites seem to experience this tradeoff, we can perform
+some sort of hierarchical clustering algorithm. Neil suggested using conditional 
+inference trees with some sort of univariate control, as opposed to the standard 
+Bonferroni method.
+
+## Fitting PermANOVA to these sites
+
+```{r Calculating LRRs, include=FALSE}
+rm(list=ls())
+
+# Read biomass data
+biomass_data <- fread('C:/Users/ebatz/Dropbox/NutNet Data/comb-by-plot-31-August-2018.csv',
+                  stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+
+biomass_data$site_code <- factor(biomass_data$site_code)
+biomass_data$trt <- factor(biomass_data$trt)
+
+#Choose sites with at least 3 years of data
+sites <- biomass_data %>% 
+  group_by(site_code,region,first_nutrient_year) %>% 
+  summarise(yrs.data = length(unique(year)),fyear = min(year), lyear = max(year)) %>% 
+  arrange(yrs.data)
+
+sites.long <- as.character(sites[yrs.data >= 3,`site_code`])
+rm(sites)
+
+bmass <- biomass_data[site_code %in% sites.long]
+
+cover <- fread('C:/Users/ebatz/Dropbox/NutNet Data/full-cover-31-August-2018.csv',
+               stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+cover.long <- cover[site_code%in%c(sites.long) & live==1,]
+cover.long <- left_join(cover.long,distinct(bmass[,.(`site_code`,`region`)]))
+cover.long$max_cover = as.numeric(cover.long$max_cover)
+```
+
+```{r, include = FALSE}
+#Choosing only our treatments of interest
+cover.long <- cover.long[trt %in% c('Control','N','P','K')]
+
+#Clean out unknowns, non-vascular plants
+# sps <- unique(cover.long$Taxon)
+#unwanted.sps <- sps[c(grep('UNKNOWN',sps),grep('BRYOPHYTE',sps),grep('LICHEN',sps))]
+#cover.long <- cover.long[!(Taxon %in% unwanted.sps | local_lifeform == 'MOSS' | functional_group == 'BRYOPHYTE')]
+# cover.long[functional_group=='GRAMINOID', functional_group := 'GRASS']
+# rm(sps,unwanted.sps)
+#rm(sps,unwanted.sps)
+
+#Choose plots with at least 3 years of data
+## This takes care of a few sites that have strange plot configurations,
+## like sgs.us
+site.plots.keep <- cover.long %>% 
+  group_by(site_code,block,plot,trt) %>% 
+  summarise(yrs.data = length(unique(year))) %>% 
+  filter(yrs.data>= 5)
+
+## Some sites have multiple control plots in a block.
+## Choosing only the lowest numbered plot belong to a treatment in each block.
+site.plots.keep <- left_join(site.plots.keep,
+                             site.plots.keep %>% group_by(site_code,block,trt) %>% 
+                               summarize(min.plot = min(plot))) %>% 
+  filter(plot==min.plot) %>% 
+  select(-min.plot,-yrs.data)
+cover.long <- left_join(site.plots.keep,cover.long)
+
+cover.long <- droplevels(cover.long) #cover.long$site_code <- factor(cover.long$site_code)
+rm(site.plots.keep)
+
+# cast long into wide
+cover.wide <- dcast(cover.long,site_code+year+block+plot+trt+year_trt ~ Taxon,
+                    value.var='max_cover', 
+                    fun.aggregate = sum,drop=T,fill=0)
+```
+
+
+```{r, include = FALSE}
+# Adding in additional info
+
+siteinfo <- biomass_data[site_code %in% sites.long, 
+                         .(`site_code`,`site_name`,`continent`,`region`,`first_nutrient_year`,`site_richness`)] %>% distinct()
+
+spsinfo <- select(data.frame(cover.long),site_code,Family:ps_path,-live) %>% distinct()
+
+#Summarizing some information about the species
+#Max cover reached in a plot in that site, CV of cover
+# coeflist.site <- left_join(coeflist.site,cover.long %>% group_by(site_code, Family, Taxon) %>% summarize(max.cover = max(max_cover), cv.cover=sd(max_cover)/mean(max_cover)))
+```
+
+Standardizing by total observations per column - it may make sense to not just look at absolute cover, but rather, the % cover of each observed plot
+
+```{r}
+cols <- c(colnames(cover.wide)[-c(1:6)])
+cover.wide[ , (cols) := lapply(.SD, "as.numeric"), .SDcols = cols]
+attr.mat = cover.wide[,1:6]
+cover.vals = data.frame(cover.wide[,-c(1:6)])
+cover.mat = round(vegan::decostand(cover.vals, method = "total"), 3)
+#cover.mat = cover.vals
+
+attr.mat = dummy_columns(attr.mat, select_columns = "trt", 
+                           remove_first_dummy = TRUE) %>%
+  replace_na(list(trt_K = 0, trt_N = 0, trt_P = 0)) %>%
+  mutate(trt_K_num = as.factor(trt_K * year_trt),
+         trt_P_num = as.factor(trt_P * year_trt),
+         trt_N_num = as.factor(trt_N * year_trt),
+         year_trt = as.factor(year_trt))
+
+attr.mat$trt_K[attr.mat$year_trt == 0] = 0
+attr.mat$trt_P[attr.mat$year_trt == 0] = 0
+attr.mat$trt_N[attr.mat$year_trt == 0] = 0
+```
+
+```{r}
+# Creating list for storage
+output = list()
+# Initializing counter variables
+counter <- 1
+
+# For all unique sites selected
+for(site in unique(attr.mat$site_code)){
+  
+  # Subset to a single site
+  com.subset <- data.frame(cover.mat)[attr.mat$site_code == site,]
+  
+  # Remove all zero columns
+  com.subset = com.subset[,colSums(com.subset) > 0]
+  
+  # Pull out relevant plot attributes for each site
+  attr.subset <- data.frame(attr.mat) %>% filter(site_code == site)
+  
+  # Check that these two matrices are the same size
+  expect_true(nrow(attr.subset) == nrow(com.subset))
+    mod_anov <- adonis(com.subset ~ as.factor(year_trt) + trt_K + trt_P + trt_N,
+                     data = attr.subset, 
+                     method = "euclidean", 
+                     strata = attr.subset$block,
+                     by = "margin",
+                     permutations = 9999)
+    
+  # Saving ouput
+    output[[counter]] = list(siteinfo = attr.subset,
+                             aovtable = mod_anov$aov.tab,
+                             sitescores = mod_anov$coef.sites,
+                             specscores = mod_anov$coefficients)
+    
+  # Update counter
+  counter = counter + 1 
+}
+
+storagelist <- list()
+
+for(i in 1:length(output)){
+
+  anovatab = bind_cols(site = as.character(unique(output[[i]]$siteinfo$site_code)),
+            data.frame(matrix(output[[i]]$aovtable$`Pr(>F)`, nrow = 1)))
+  
+  colnames(anovatab)[2:ncol(anovatab)] =   rownames(output[[i]]$aovtable)
+  
+  storagelist[[i]] = anovatab
+
+  }
+
+# write.csv(x = bind_rows(storagelist),
+#           "composition_pvalues.csv")
+
+storagelist <- list()
+
+for(i in 1:length(output)){
+  sp_scores = data.frame(output[[i]]$specscores[grep("trt_", rownames(output[[i]]$specscores)),])
+
+  spectab = bind_cols(site = rep(unique(output[[i]]$siteinfo$site_code), 3),
+                    trt = rownames(sp_scores),
+                    sp_scores)
+  
+  storagelist[[i]] = spectab
+}
+
+specscores_full = bind_rows(storagelist) %>% 
+  replace(., is.na(.), 0)
+```
+
+## Calculate dot-product of pairwise correlations
+
+After calculating this dot-product, the distributions of each set correlation scores
+can be seen in histograms below. Generally, community change appears to be either
+orthogonal, or positive -- value that are close to zero or are much greater than 
+zero. There are a few sites with negative correlations, however.
+
+In particular, change seems to be most orthogonal or negatively correlated across
+the N-P pairwise comparison.
+
+```{r}
+
+dotprod <- function(x, normalize = TRUE){
+  
+  scalar1 <- function(x) {x / sqrt(sum(x^2))}
+
+  N_vec <- x %>% filter(trt == "trt_N") %>% select(-trt, -site)
+  P_vec <- x %>% filter(trt == "trt_P") %>% select(-trt, -site)
+  K_vec <- x %>% filter(trt == "trt_K") %>% select(-trt, -site)
+  
+  if(normalize == TRUE){
+    N_vec <- scalar1(N_vec)
+    P_vec <- scalar1(P_vec)
+    K_vec <- scalar1(K_vec)
+  }
+  
+  output = data.frame(NP = pracma::dot(as.numeric(N_vec), as.numeric(P_vec)),
+                      NK = pracma::dot(as.numeric(N_vec), as.numeric(K_vec)),
+                      PK = pracma::dot(as.numeric(P_vec), as.numeric(K_vec)))
+  
+  return(output)
+  
+}
+
+
+dotoutput = specscores_full %>% group_by(site) %>%
+  do(dotprod(.))
+
+site_pvals = read.csv("composition_pvalues.csv", header = TRUE, stringsAsFactors = FALSE)
+
+dot_full = left_join(site_pvals %>% select(-Total, -Residuals), dotoutput) %>% select(-X)
+
+dot_full %>% filter(trt_N < .05 & trt_P < .05) %>%
+  ggplot(aes(x = NP)) +
+  geom_histogram(fill = "white", color = "black") +
+  xlim(-1, 1) +
+  ggtitle("NP Tradeoff")
+
+dot_full %>% filter(trt_N < .05 & trt_K < .05) %>%
+  ggplot(aes(x = NK)) +
+  geom_histogram(fill = "white", color = "black") +
+  xlim(-1, 1) +
+  ggtitle("NK Tradeoff")
+
+dot_full %>% filter(trt_K < .05 & trt_P < .05) %>%
+  ggplot(aes(x = PK)) +
+  geom_histogram(fill = "white", color = "black") +
+  xlim(-1, 1) +
+  ggtitle("PK Tradeoff")
+```
+
+To get a sense of what sites seem to be showing the strongest or weakest
+tradeoffs, I've ranked these scores and plotted them with site labels. Each bar
+is filled when the results of the permutational ANOVA indicate that both elements
+of the fertilization tradeoff were significant. This figure may not make a whole
+lot of sense without prior knowledge of the site distribution, but is useful in
+thinking about what sites might show the biggest tradeoff.
+
+```{r}
+dot_full %>% arrange(NP) %>% 
+  ggplot(aes(x = c(1:nrow(dot_full)),
+             y = NP,
+             fill = trt_P < 0.05 & trt_N < 0.05)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = site), angle = 90) +
+  ggtitle("NP Tradeoff, Filled by Significance")
+
+dot_full %>% arrange(NK) %>%
+  ggplot(aes(x = c(1:nrow(dot_full)),
+             y = NK,
+             fill = trt_K < 0.05 & trt_N < 0.05)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = site), angle = 90) +
+  ggtitle("NK Tradeoff, Filled by Significance")
+
+dot_full %>% arrange(PK) %>%
+  ggplot(aes(x = c(1:nrow(dot_full)),
+             y = PK,
+             fill = trt_P < 0.05 & trt_K < 0.05)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = site), angle = 90) +
+  ggtitle("PK Tradeoff, Filled by Significance")
+```
+I've also highlighted a couple of these below, plotting an RDA of the same
+model used to generate the species responses to the different nutrients. This is
+mostly a proof of concept. Are the values we extract from this metric pretty similar
+to our results if we just examine the angles between vectors in an ordination?
+
+```{r}
+rdaFit = function(site){
+  com.subset <- data.frame(cover.mat)[attr.mat$site_code == site,]
+  
+  # Remove all zero columns
+  com.subset = com.subset[,colSums(com.subset) > 0]
+  
+  # Pull out relevant plot attributes for each site
+  attr.subset <- data.frame(attr.mat) %>% filter(site_code == site)
+  
+  # Check that these two matrices are the same size
+  expect_true(nrow(attr.subset) == nrow(com.subset))
+  
+  # Generate and return an NMDS figure
+  mod_out = vegan::rda(com.subset ~ as.factor(year_trt) + trt_K + trt_P + trt_N,
+                     data = attr.subset)
+  
+  return(mod_out)
+  
+}
+
+plot(rdaFit("cowi.ca"), main = "Cowichan - Strong Tradeoff, value = -0.5")
+plot(rdaFit("sier.us"), main = "Sierra Footill - Weak Tradeoff, value = 0.1")
+plot(rdaFit("konz.us"), main = "Konza - No Tradeoff, value = 0.9")
+```
+
+# What variables are correlated with different tradeoff axes?
+
+```{r}
+plot.descriptions <- read.csv("C:/Users/ebatz/Dropbox/NutNet Data/all-plot-descriptions-1-December-2017.csv",
+                              stringsAsFactors = FALSE)
+
+soil.chars <- read.csv("C:/Users/ebatz/Dropbox/NutNet Data/comb-by-plot-clim-soil-diversity-31-Aug-2018.csv",
+                              stringsAsFactors = FALSE)
+
+site.covars <- read.csv("../Data/site_covars.csv")
+
+div.sum = soil.chars %>% 
+  group_by(site_code) %>%
+  filter(year_trt == 0) %>%
+  summarise(pretrt_rich = unique(site_richness),
+            meanprod = mean(na.omit(total_mass)),
+            pretrt_simp = mean(inverse_simpson),
+            mean_precip = unique(MAP_v2),
+            mean_precipvar = unique(MAP_VAR_v2))
+
+full_table = dot_full %>% rename(site_code = site) %>% 
+  left_join(left_join(site.covars, div.sum, by = "site_code"))
+```
+
+## Simple Exploration
+```{r}
+full_table %>% ggplot(aes(x = pretrt_rich, 
+                          y = NP,
+                          color = trt_P < 0.05 & trt_N < 0.05)) +
+  geom_point() +
+  stat_smooth(method = "lm")
+
+full_table %>% ggplot(aes(x = pretrt_simp, 
+                          y = NP,
+                          color = trt_P < 0.05 & trt_N < 0.05)) +
+  geom_point() +
+  stat_smooth(method = "lm")
+
+full_table %>% ggplot(aes(x = meanprod, 
+                          y = NP,
+                          color = trt_P < 0.05 & trt_N < 0.05)) +
+  geom_point() +
+  stat_smooth(method = "lm")
+
+full_table %>% ggplot(aes(x = cv.pctN, 
+                          y = NP,
+                          color = trt_P < 0.05 & trt_N < 0.05)) +
+  geom_point() +
+  stat_smooth(method = "lm")
+
+full_table %>% ggplot(aes(x = cv.ppmP, 
+                          y = NP,
+                          color = trt_P < 0.05 & trt_N < 0.05)) +
+  geom_point() +
+  stat_smooth(method = "lm")
+```
+
+```{r}
+install.packages("partykit")
+library(partykit)
+univ<-ctree_control(testtype="Univariate")
+inferencetree<-ctree(full_table$NK ~ ., control=univ, na.action=na.exclude, data = full_table[,10:ncol(full_table)])
+plot(inferencetree)
+```
+

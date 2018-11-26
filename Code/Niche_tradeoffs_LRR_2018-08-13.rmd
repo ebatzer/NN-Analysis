@@ -9,17 +9,17 @@ library(smatr)
 library(tidyverse)
 library(data.table); library(dtplyr)
 # Run the first block of code if you want to calculate the LRRs within this script, otherwise just load the precalculated data
-load('LRR_NPK_measurements_2018-08-13.RData')
+#load('LRR_NPK_measurements_2018-08-13.RData')
 
 ```
 
 Compiled on `r date()`
 
-```{r Calculating LRRs, eval=F,include=F}
+```{r Calculating LRRs, eval=T,include=F}
 rm(list=ls())
 
 # Read biomass data
-biomass_data <- fread("~/Dropbox/Comp-Sync/Projects/Nutnet_base_data/comb-by-plot-09-April-2018.csv",stringsAsFactors = F,na.strings=c("NULL",'NA'))
+biomass_data <- fread("C:/Users/ebatzer/Dropbox/NutNet Data/comb-by-plot-31-August-2018.csv",stringsAsFactors = F,na.strings=c("NULL",'NA'))
 biomass_data$site_code <- factor(biomass_data$site_code)
 biomass_data$trt <- factor(biomass_data$trt)
 
@@ -31,7 +31,7 @@ rm(sites)
 
 bmass <- biomass_data[site_code %in% sites.long]
 
-cover <- data.table(read.csv('~/Dropbox/Comp-Sync/Projects/Nutnet_base_data/full-cover-09-April-2018.csv',na.strings = c('NA','NULL')))
+cover <- data.table(read.csv('C:/Users/ebatzer/Dropbox/NutNet Data/full-cover-31-August-2018.csv',na.strings = c('NA','NULL')))
 cover.long <- cover[site_code%in%c(sites.long) & live==1,]
 cover.long <- left_join(cover.long,distinct(bmass[,.(`site_code`,`region`)]))
 
@@ -105,7 +105,7 @@ for (i in unique(dat$site_code)) {
     subdat2 <- subdat[block==j]
     dat2.wide <- dcast(subdat2,site_code+year+year_trt+block+plot+trt ~ Taxon,value.var='max_cover', fun.aggregate = sum,drop=T,fill=0)
     #Now add 0.01 to all values
-    dat2.wide[,7:ncol(dat2.wide)] <- dat2.wide[,7:ncol(dat2.wide)] + 0.01
+    dat2.wide[,7:ncol(dat2.wide)] <- dat2.wide[,7:ncol(dat2.wide)] + 10
     dat2.long <- melt(dat2.wide,id.vars=c(1:6),variable.name='Taxon',value.name='max_cover')
     dat2 <- bind_rows(dat2,dat2.long)
   }
@@ -163,8 +163,8 @@ rm(obs.keep,cover.wide,cover,biomass_data,sites.long)
 # LRR_nut = detrended LRR(base 2) of species cover in treated vs control
 
 #Now a slight problem with a large number of zeros in this calculated data
-#dat <- coef.npk.long[cover_nut==0.01 & cover_cont==0.01 & LRR_nut!=0] %>% arrange(desc(LRR_nut))
-#hist(dat$num.yrs)
+dat <- coef.npk.long[cover_nut==0.01 & cover_cont==0.01 & LRR_nut!=0] %>% arrange(desc(LRR_nut))
+hist(dat$num.yrs, breaks = 5)
 #There are a lot of entries (14%) where the species was not seen in either control or treatment plot that year, but is only there because we added minimum cover amount to the data
 # We cannot remove all of them, that would eliminate the signal of species that were present in a plot initially and then disappeared.
 # But if we don't remove them, are we giving a lot of power to what could be an erroneous observation?

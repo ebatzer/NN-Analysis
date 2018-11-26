@@ -1,0 +1,750 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+# Filtering data with different thresholds:
+
+Per meting on 9-6-2018, filtering the community dataset to a subset of species 
+may greatly improve the relevance + significance of our result.
+
+Key "levers" to manipulate:
+
+* Normalization of cover values - dividing matrix values by row total
+    * Maximum (total) cover = 1
+* Mean cover in control
+    * Mean cover in control plot over the observed sampling period
+* Persistence in control
+    * Number of observations of a species in control over the observed sampling period
+* Present in year 0 for control and at least one nutrient treatment
+    * Observations in initial year that may influence detrending
+
+And correlations between between.
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+library(smatr); library(tidyverse); library(data.table); library(dtplyr)
+library(testthat); library(gridExtra)
+
+# Read biomass data
+biomass_data <- fread('C:/Users/ebatz/Dropbox/NutNet Data/comb-by-plot-31-August-2018.csv',
+                  stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+
+biomass_data$site_code <- factor(biomass_data$site_code)
+biomass_data$trt <- factor(biomass_data$trt)
+
+#Choose sites with at least 3 years of data
+sites <- biomass_data %>% 
+  group_by(site_code,region,first_nutrient_year) %>% 
+  summarise(yrs.data = length(unique(year)),fyear = min(year), lyear = max(year)) %>% 
+  arrange(yrs.data)
+
+sites.long <- as.character(sites[yrs.data >= 3,`site_code`])
+rm(sites)
+
+bmass <- biomass_data[site_code %in% sites.long]
+
+cover <- fread('C:/Users/ebatz/Dropbox/NutNet Data/full-cover-31-August-2018.csv',
+               stringsAsFactors = FALSE,
+               na.strings = c('NA','NULL'))
+cover.long <- cover[site_code%in%c(sites.long) & live==1,]
+cover.long <- left_join(cover.long,distinct(bmass[,.(`site_code`,`region`)]))
+cover.long <- cover.long[ , max_cover := as.numeric(max_cover)]
+
+#Choose plots with at least 3 years of data
+## This takes care of a few sites that have strange plot configurations,
+## like sgs.us
+site.plots.keep <- cover.long %>% 
+  group_by(site_code,block,plot,trt) %>% 
+  summarise(yrs.data = length(unique(year))) %>% 
+  filter(yrs.data>=3)
+
+## Some sites have multiple control plots in a block.
+## Choosing only the lowest numbered plot belong to a treatment in each block.
+site.plots.keep <- left_join(site.plots.keep,
+                             site.plots.keep %>% group_by(site_code,block,trt) %>% 
+                               summarize(min.plot = min(plot))) %>% 
+  filter(plot==min.plot) %>% 
+  select(-min.plot,-yrs.data)
+
+cover.long <- left_join(site.plots.keep,cover.long)
+cover.long <- droplevels(cover.long) #cover.long$site_code <- factor(cover.long$site_code)
+rm(site.plots.keep)
+```
+
+# Tuning function:
+
+The tuning function produces a new datatable (tuningtable) that contains information
+on the relevant variables we discussed selecting species by. It's a modular function,
+so if we need to add more variables or treatments in our subsetting, it's easy to do so.
+
+I think the easiest way to use this table is to select a number of thresholds,
+filter the table by these thresholds, then use a left_join to filter the 
+LRR data to just those relevant species.
+
+Some of the key variables to pull from this dataset are:
+
+* Persistence in control - the total number of observations in control divided 
+by the number of years
+
+* Mean cover in control - the average recorded cover in control treatments over 
+the duration of sampling, including years with no observations (given a "0")
+
+* Representation in the first year of sampling - the total number of plots where
+a species was observed in year 0, pre-treatment.
+
+The first few rows of the table are as follows:
+
+```{r, include = FALSE, eval = FALSE}
+tuneR <- function(covdata, # Cover data
+                  selected.trts = c("Control", "N", "P", "K", "Fence", "NPK", "NPK + Fence"), # Treatments to include
+                  normalize = TRUE, # Normalize or not? Logical
+                  sigdig = 2 # Number of significant digits for rounding
+){
+  
+  # If deciding to normalize data
+  if(normalize == TRUE){
+    
+      # For all site x block x plot x year_trt combinations
+    coversums <- covdata %>% group_by(site_code, block, plot, year_trt) %>%
+      
+      # Create a new column of total cover and join to dataset
+      summarise(plottotal = sum(na.omit(max_cover)))
+
+    # Setting new cover data with normalized cover
+    covdata <- left_join(covdata, coversums) %>%
+      
+      # Reassign max_cover as normalized cover value
+      mutate(max_cover = round(max_cover / plottotal, sigdig)) %>%
+      
+      # Remove the total cover value
+      select(-plottotal)
+    
+    if(max(covdata$max_cover) > 1){
+      stop(paste("Error - Max cover value not less than one in sites",
+                 unique(covdata$site_code[covdata$max_cover > 1])))
+    }
+  }
+  
+  # General observation table
+  obs.per.plot = data.frame(covdata) %>%
+    filter(trt %in% selected.trts) %>%
+    group_by(site_code, block) %>%
+    summarise(nyears = length(unique(year)),
+              firstyear = min(year),
+              lastyear = max(year))
+  
+  # Frequency of species observations and mean cover
+  summarise_obs <- function(x){
+    
+    # Create storage dataframe with total number of observations
+    output = data.frame(totalobs = nrow(x))
+    counter = 1
+    
+    # For each set of treatments within each block x species combination
+    for(i in unique(selected.trts)){
+      
+      counter = counter + 1
+      
+      # Create and rename a new column that indicates the total times a species was found within a treatment
+      output = bind_cols(output, new = sum(x$trt == i))
+      colnames(output)[counter] = paste("tot_obs", i, sep = "")
+      
+      # And do the same for mean cover
+      counter = counter + 1
+      output = bind_cols(output, new = mean(na.omit(x$max_cover[x$trt == i])))
+      colnames(output)[counter] = paste("mean_cov", i, sep = "")
+    }
+    
+    return(output)
+  }
+  
+  # Run function for all years
+  specobs = data.frame(covdata) %>%
+      filter(trt %in% selected.trts) %>%
+      group_by(site_code, block, Taxon) %>%
+      do(summarise_obs(.))
+  
+  # Presence in the first year of sampling
+  summarise_yearzero <- function(x){
+    
+    # Create storage dataframe with total number of observations
+    output = data.frame(total_pret_obs = nrow(x))
+    counter = 1
+    
+# For each set of treatments within each block x species combination
+    for(i in unique(selected.trts)){
+      
+      # Create and rename a new column that indicates whether a species was found within a treatment for the first year of sampling
+      counter = counter + 1
+      output = bind_cols(output, new = sum(x$trt == i))
+      colnames(output)[counter] = paste("pret_obs", i, sep = "")
+      
+      # And do the same for cover
+      counter = counter + 1
+      newval = x$max_cover[x$trt == i]
+      
+      # If there is no recorded value, give it a zero
+      if(length(newval) == 0){newval = 0}
+      
+      # And bind together as before
+      output = bind_cols(output, new = newval)
+      colnames(output)[counter] = paste("pret_cov", i, sep = "")
+      }
+    
+    return(output)
+  }
+  
+  # Run function for the first year
+  trtcov <- data.frame(covdata) %>% 
+    filter(trt %in% selected.trts) %>% 
+    filter(year_trt == 0) %>% 
+    group_by(site_code, block, Taxon) %>%
+    do(summarise_yearzero(.))
+
+  # Binding all values together into a single dataset
+  fulloutput = inner_join(obs.per.plot, specobs, by = c("site_code", "block"))
+  fulloutput = left_join(fulloutput, trtcov, by = c("site_code", "block", "Taxon"))
+  fulloutput = fulloutput %>% replace(., is.na(.), 0) %>% ungroup()
+  
+  return(fulloutput)
+}
+
+tuningtable <- tuneR(cover.long)
+write.csv(x = tuningtable, "../data/tuningtable_normalized.csv")
+```
+
+```{r}
+tuningtable = read.csv("../data/tuningtable_normalized.csv", 
+                       header = TRUE,
+                       stringsAsFactors = FALSE)
+head(tuningtable)
+```
+
+
+# Column Names in TuningTable
+
+Site_code, block, plot as before
+
+New columns:
+
+__Plot level__  
+
+* nyears - Number of years of observations (plot)                
+
+* firstyear - First year of observation (plot)  
+
+* lastyear - Last year of observation (plot)    
+
+__Taxon level__  
+
+* Taxon - Taxon name                
+
+* totalobs - Total number of observations in block, over time   
+
+* tot_obsControl - Total number of observations in control plot  
+
+* mean_covControl - Mean cover in control plot, all years   
+
+* tot_obsN - Total number of observations in +N plot  
+
+* mean_covN - Mean cover in +N plot, all years   
+
+* tot_obsP - Total number of observations in +P plot  
+
+* mean_covP - Mean cover in control +P, all years   
+
+* tot_obsK - Total number of observations in +K plot  
+
+* mean_covK - Mean cover in +K plot, all years   
+
+* tot_obsFence - Total number of observations in +Fence plot  
+
+* mean_covFence - Mean cover in +Fence plot, all years   
+
+* tot_obsNPK - Total number of observations in +NPK plot  
+
+* mean_covNPK -  Mean cover in +NPK plot, all years   
+
+* tot_obsNPK + Fence - Total number of observations in +NPK + Fence plot  
+
+* mean_covNPK + Fence - Mean cover in +NPK + Fence plot, all years   
+
+__Pretreatment, Taxon level__  
+
+* total_pret_obs  - Total number of observations in block, first year  
+
+* pret_obsControl - Observation in control plot, first year (1/0)  
+
+* pret_covControl - Cover in control plot, first year  
+
+* pret_obsN - Observation in +N plot, first year (1/0)  
+
+* pret_covN - Cover in +N plot, first year   
+
+* pret_obsP - Observation in +P plot, first year (1/0)  
+
+* pret_covP - Cover in +P plot, first year  
+
+* pret_obsK - Observation in +K plot, first year (1/0)  
+
+* pret_covK - Cover in +K plot, first year  
+
+* pret_obsFence - Observation in +Fence plot, first year (1/0)  
+
+* pret_covFence - Cover in +Fence plot, first year  
+
+* pret_obsNPK - Observation in +NPK plot, first year (1/0)  
+
+* pret_covNPK - Cover in +NPK plot, first year   
+
+* pret_obsNPK + Fence - Observation in +NPK + Fence plot, first year (1/0)   
+
+* pret_covNPK + Fence - Cover in +NPK + Fence plot, first year  
+
+__As an aside, some of the sites don't seem to be behaving well:__ 
+
+The unique years recorded does not always seem to equal the first year subtracted
+from the last year, + 1. Is this the result of years where no live species are 
+recorded in a plot?
+
+__Offending sites:__
+```{r, echo = FALSE}
+as.character(unique(tuningtable$site_code[tuningtable$lastyear - tuningtable$firstyear + 1 > tuningtable$nyears]))
+```
+
+# Correlations among measures:
+
+```{r}
+badsites = as.character(unique(tuningtable$site_code[tuningtable$totalobs > tuningtable$nyears * 7]))
+tuningtable = tuningtable %>% filter(! site_code %in% badsites)
+
+# Mean control cover
+tuningtable %>% ggplot(aes(x = mean_covControl * (tot_obsControl / (tuningtable$lastyear - tuningtable$firstyear + 1)),
+                           y = tot_obsControl / (tuningtable$lastyear - tuningtable$firstyear + 1))) +
+  geom_point() +
+  stat_smooth(se = FALSE) +
+  ylab("Persistence in Control") +
+  xlab("Mean Cover in Control") +
+  ggtitle("Cover vs. Persistence")
+
+# Persistence in control
+tuningtable %>% filter(pret_obsControl == 1) %>%
+  ggplot(aes(x = mean_covControl * (tot_obsControl / (lastyear - firstyear + 1)),
+                           y = pret_obsControl + pret_obsN + pret_obsK + pret_obsP,
+                           color = paste(pret_obsControl, pret_obsN, pret_obsK, pret_obsP))) +
+  geom_point() +
+  stat_smooth(se = FALSE, aes(color = NULL)) +
+  ylab("Representation in Year 0") +
+  xlab("Mean Cover in Control") +
+  ggtitle("Cover vs. Representation in Year 0") +
+  guides(color=guide_legend(title="Yr1 Presence \n     C|N|K|P"))
+
+
+# Presence in year 0 + at least 1 nutrient addition treatment
+tuningtable %>% filter(pret_obsControl == 1) %>%
+  ggplot(aes(x = tot_obsControl / (lastyear - firstyear + 1),
+             y = pret_obsControl + pret_obsN + pret_obsK + pret_obsP,
+             color = paste(pret_obsControl, pret_obsN, pret_obsK, pret_obsP))) +
+  geom_point() +
+  stat_smooth(se = FALSE, aes(color = NULL)) +
+  ylab("Representation in Year 0") +
+  xlab("Persistence in Control") +
+  ggtitle("Persistence vs. Representation in Year 0") +
+  guides(color=guide_legend(title="Yr1 Presence \n     C|N|K|P"))
+```
+
+# LRR Sensitivity to Filtering Approaches
+
+To see how the use of these different tuning parameters, I've constructed a series
+of figures that subset your LRR output based on the tuning table. It's a bit messy,
+but provides some good indication of threshold values for filtering.
+
+Because many of the filtering variables are correlated, the results are quite 
+similar as we get more selective.
+
+```{r, warning = FALSE, message = FALSE}
+# Normalizing cover data:
+# For all site x block x plot x year_trt combinations
+coversums <- cover.long %>% group_by(site_code, block, plot, year_trt) %>%
+  
+  # Create a new column of total cover and join to dataset
+  summarise(plottotal = sum(na.omit(max_cover)))
+
+# Setting new cover data with normalized cover
+cover.long <- left_join(cover.long, coversums) %>%
+  
+  # Reassign max_cover as normalized cover value
+  mutate(max_cover = round(max_cover / plottotal, 2)) %>%
+  
+  # Remove the total cover value
+  select(-plottotal)
+
+if(max(cover.long$max_cover) > 1){
+  stop(paste("Error - Max cover value not less than one in sites",
+             unique(cover.long$site_code[cover.long$max_cover > 1])))
+}
+
+#Clean out unknowns, non-vascular plants
+sps <- unique(cover.long$Taxon)
+unwanted.sps <- sps[c(grep('UNKNOWN',sps),grep('BRYOPHYTE',sps),grep('LICHEN',sps))]
+cover.long <- cover.long[!(Taxon %in% unwanted.sps | local_lifeform == 'MOSS' | functional_group == 'BRYOPHYTE')]
+cover.long[functional_group=='GRAMINOID',functional_group := 'GRASS']
+rm(sps,unwanted.sps)
+
+#Choose plots with at least 3 years of data
+## This takes care of a few sites that have strange plot configurations,
+## like sgs.us
+site.plots.keep <- cover.long %>% group_by(site_code,block,plot,trt) %>% 
+  summarise(yrs.data = length(unique(year))) %>% filter(yrs.data>=3)
+## Some sites have multiple control plots in a block.
+## Choosing only the lowest numbered plot belong to a treatment in each block.
+site.plots.keep <- left_join(site.plots.keep,
+                             site.plots.keep %>% group_by(site_code,block,trt) %>% 
+                               summarize(min.plot = min(plot))) %>% 
+  filter(plot==min.plot) %>% select(-min.plot,-yrs.data)
+cover.long <- left_join(site.plots.keep,cover.long)
+cover.long <- droplevels(cover.long) #cover.long$site_code <- factor(cover.long$site_code)
+rm(site.plots.keep)
+
+# cast long into wide
+cover.wide <- dcast(cover.long,site_code+year+block+plot+trt ~ Taxon,value.var='max_cover', fun.aggregate = sum,drop=T,fill=0)
+
+
+# Adding in additional info ----------------------------------------------------
+
+siteinfo <- biomass_data[site_code %in% sites.long, .(`site_code`,`site_name`,`continent`,`region`,`first_nutrient_year`,`site_richness`)] %>% distinct()
+
+spsinfo <- select(data.frame(cover.long),site_code,Family:ps_path,-live) %>% distinct()
+
+#Summarizing some information about the species
+#Max cover reached in a plot in that site, CV of cover
+# coeflist.site <- left_join(coeflist.site,cover.long %>% group_by(site_code, Family, Taxon) %>% summarize(max.cover = max(max_cover), cv.cover=sd(max_cover)/mean(max_cover)))
+
+# Independent measure of N,P and K response following EL 2013 ----------------------------------
+
+# Intermediate data products
+### dat2 - cover data from which LRRs are being calculated
+### dat3 - baseline year data for each species-plot
+### dat4 - LRR for each species plot relative to baseline
+### dat5 - LRR of nut effect after detrending control
+
+#Species selection - 	"only those species recorded at least once either pre or 
+# post treatment in the nutrient treatment plot within a block"
+# keep a species-site-block-trt only if has an observation in the Nut treated plots, at any point of time
+obs.keep <- cover.long[trt != 'Control'] %>% group_by(site_code,Taxon,block,trt) %>% 
+  summarize(num.yrs = length(unique(year))) %>% mutate(iden = paste0(site_code,Taxon,block))
+# Use at the end of the procedure to only select the ones we want
+
+dat <- cover.long[,iden := paste0(site_code,Taxon,block)]
+dat <- dat[iden %in% unique(obs.keep$iden)]
+obs.keep[,iden:= NULL]
+#convert to wide, but only at the site-block scale, to avoid too many zeros
+# Add minimum observed percent cover (0.01) to all values - to the wide table
+# Convert back to long
+dat2 <- data.table()
+#i='cdcr.us' ; j = 1
+for (i in unique(dat$site_code)) {
+  subdat <- dat[site_code==i]
+  for (j in unique(subdat$block)) {
+    subdat2 <- subdat[block==j]
+    dat2.wide <- dcast(subdat2,site_code+year+year_trt+block+plot+trt ~ Taxon,value.var='max_cover', fun.aggregate = sum,drop=T,fill=0)
+    #Now add 0.01 to all values
+    dat2.wide[,7:ncol(dat2.wide)] <- dat2.wide[,7:ncol(dat2.wide)] + .01
+    dat2.long <- melt(dat2.wide,id.vars=c(1:6),variable.name='Taxon',value.name='max_cover')
+    dat2 <- bind_rows(dat2,dat2.long)
+  }
+}
+
+rm(dat2.long,dat2.wide,i,j,subdat,subdat2)
+
+
+# Calculate LRR of each year relative to pretreatment year ----------------
+
+#add in cover of pretrt year for each species-plot combination
+dat3 <- dat2 %>% group_by(site_code,plot,Taxon) %>% filter(year_trt == min(year_trt)) 
+dat3 <- dat3[,.(`site_code`,`plot`,`Taxon`,`year_trt`,`max_cover`)] %>% rename(base_year=year_trt,cover_base=max_cover)
+#dat3 <- dat3[,.(`site_code`,`plot`,`Taxon`,`base_year`=year_trt,`cover_base`=max_cover)]
+#    select(site_code,plot,Taxon,`base_year`=year_trt,`cover_base`=max_cover)
+# sier.us, sgs.us and hopl.us show some species as having their min(year_trt) measurement in y1
+# saline.us and saana.fi are missing pretrt year in the cover dataset
+#table(dat1[site_code=='hopl.us']$plot,dat1[site_code=='hopl.us']$year)
+dat4 <- left_join(dat2,dat3)
+dat4 <- dat4[year_trt != base_year] #remove the base year
+#dat4[,LRRt := log2(max_cover/cover_base)] ;
+dat4[,LRRt := log2(max_cover/cover_base)] ;
+#Chose log2 in order for the coefficients to be interpretable
+
+
+# Detrend from the control ------------------------------------------------
+
+#add a column of control for each species-block in a year
+dat5 <- left_join(dat4[trt!='Control'],
+                  select(dat4[trt=='Control'],site_code,Taxon,year,year_trt,block,plot_cont=plot,cover_cont=max_cover,cover.base_cont=cover_base,LRRcont_yt=LRRt))
+dat5 <- rename(dat5,LRRnut_yt=LRRt,plot_nut=plot,cover_nut=max_cover,cover.base_nut=cover_base) 
+dat5[,LRR_nut := LRRnut_yt-LRRcont_yt]
+
+# Selecting species again
+# keep a species-site-block-trt only if has an observation in the Nut treated plots, at any point of time
+dat5 <- left_join(obs.keep,dat5)
+
+coef.npk.long <- dat5 %>% select(site_code,Taxon,block,year,year_trt,trt,num.yrs,plot_nut,cover.base_nut,cover_nut,plot_cont,cover.base_cont,cover_cont,LRRnut_yt,LRRcont_yt,LRR_nut)
+
+rm(dat,dat2,dat3,dat4,dat5)
+rm(obs.keep,cover.wide,cover,biomass_data,sites.long)
+
+# Aggregate final products ------------------------------------------------
+
+# Description of coef.npk.long - the base table from which metrics are aggregated
+# Usual columns - site_code,Taxon,block,year,year_trt,trt
+# num.yrs - number of years that this species was observed in the treated plot
+# plot_nut = plot number of treated plot,
+# cover.base_nut = cover of species in treated plot in base year
+# cover_nut = cover of species in treated plot ,
+# plot_cont = plot number of control plot,
+# cover.base_cont = cover of species in control plot in base year
+# cover_cont = cover of species in control plot ,
+# LRRnut_yt = LRR(base=2) of cover relative to base year in treated plot,
+# LRRcont_yt = LRR(base=2) of cover relative to base year in control plot,
+# LRR_nut = detrended LRR(base 2) of species cover in treated vs control
+
+#Now a slight problem with a large number of zeros in this calculated data
+# dat <- coef.npk.long[cover_nut==0.01 & cover_cont==0.01 & LRR_nut!=0] %>% arrange(desc(LRR_nut))
+
+#There are a lot of entries (14%) where the species was not seen in either control or treatment plot that year, but is only there because we added minimum cover amount to the data
+# We cannot remove all of them, that would eliminate the signal of species that were present in a plot initially and then disappeared.
+# But if we don't remove them, are we giving a lot of power to what could be an erroneous observation?
+
+#Aggregate across blocks to get mean response of a species within a site
+coef.npk.t <- dcast(coef.npk.long,site_code+Taxon+year+year_trt+block ~ trt,value.var='LRR_nut', fun.aggregate = mean,drop=T,fill=NA)
+coef.npk.t <- rename(coef.npk.t,LRR_N = N, LRR_P = P, LRR_K = K, LRR_NPK = NPK, LRR_Fence = Fence)
+
+coef.npk.raw <- dcast(coef.npk.long,site_code+Taxon+year+year_trt+block ~ trt,value.var='LRRnut_yt', fun.aggregate = mean,drop=T,fill=NA)
+coef.npk.raw <- rename(coef.npk.raw,LRR_N = N, LRR_P = P, LRR_K = K, LRR_NPK = NPK, LRR_Fence = Fence)
+
+#Aggregate response across years for a species
+# coef.npk <- coef.npk.t%>% group_by(site_code, Taxon, block) %>% 
+#   summarize(LRR_N = mean(LRR_N,na.rm=T),LRR_N_sd = sd(LRR_N,na.rm=T),nyear_N = length(unique(year_trt)),
+#             LRR_P = mean(LRR_P,na.rm=T),LRR_P_sd = sd(LRR_P,na.rm=T),nyear_P = length(unique(year_trt)),
+#             LRR_K = mean(LRR_K,na.rm=T),LRR_K_sd = sd(LRR_K,na.rm=T),nyear_K = length(unique(year_trt)),
+#             LRR_NPK = mean(LRR_NPK,na.rm=T),LRR_NPK_sd = sd(LRR_NPK,na.rm=T),nyear_NPK = length(unique(year_trt)),
+#             LRR_Fence = mean(LRR_Fence,na.rm=T),LRR_Fence_sd = sd(LRR_Fence,na.rm=T),nyear_Fence = length(unique(year_trt)))
+coef.npk.t[is.na(coef.npk.t)] <- NA #replace all NaN (generated when there were no observations for a set) - with NAs
+
+coef.npk.t <- data.table(left_join(data.frame(coef.npk.t),spsinfo))
+coef.npk.raw <- data.table(left_join(data.frame(coef.npk.raw),spsinfo))
+
+# coef.npk <- data.table(left_join(data.frame(coef.npk),spsinfo))
+```
+
+## Varying mean cover
+
+__Parameters held constant:__
+
+* Persistence = .2
+* Initial representation in plots = 4 (all treatment plots)
+
+__NOTE: ALL PLOTS FACETTED BY YEAR__
+
+```{r, fig.height=15, fig.width = 10, warning = FALSE, message = FALSE}
+
+tuning_LRRs <- function(meancov = .05,
+                     persistence = .2,
+                     initrep = 4){
+  
+  toselect = tuningtable %>% filter(
+    mean_covControl >= meancov &
+    (tot_obsControl / (lastyear - firstyear + 1)) >= persistence &
+    pret_obsControl + pret_obsN + pret_obsP + pret_obsK >= initrep &
+    pret_obsControl == 1) %>%
+    select(site_code, block, Taxon, nyears)
+
+  return(toselect)  
+}
+
+
+for(mc in seq(0, .5, by = .25)){
+  cat(paste("Mean cover = ", mc))
+
+  p1 = tuning_LRRs(meancov = mc, persistence = .2) %>% left_join(coef.npk.t) %>%
+    ggplot(aes(y=LRR_N,x=LRR_P,color=functional_group,shape=functional_group,nyears)) + 
+    geom_point() + geom_smooth(method='lm', se=F) +
+    facet_wrap(~year_trt) +
+    #geom_hline(yintercept=-1,linetype='dashed') + geom_vline(xintercept=-1,linetype='dashed') +
+    #geom_hline(yintercept=1,linetype='dashed') + geom_vline(xintercept=1,linetype='dashed') +
+    theme_bw() + labs(x='LRR N Addition - LRR Control',y='LRR P Addition - LRR Control') +
+    guides(shape = FALSE, color = FALSE) +
+    ggtitle(paste("N - P Tradeoff, mean cover >=", mc))
+  
+  p2 = tuning_LRRs(meancov = mc, persistence = .2) %>% left_join(coef.npk.t) %>%
+    ggplot(aes(y=LRR_N,x=LRR_K,color=functional_group,shape=functional_group,nyears)) + 
+    geom_point() + geom_smooth(method='lm', se=F) +
+    facet_wrap(~year_trt) +
+    #geom_hline(yintercept=-1,linetype='dashed') + geom_vline(xintercept=-1,linetype='dashed') +
+    #geom_hline(yintercept=1,linetype='dashed') + geom_vline(xintercept=1,linetype='dashed') +
+    theme_bw() + labs(x='LRR N Addition - LRR Control',y='LRR K Addition - LRR Control') +
+    guides(shape = FALSE, color = FALSE)+
+    ggtitle(paste("N - K Tradeoff, mean cover >=", mc))
+    #theme(legend.position='bottom')
+  
+  p3 = tuning_LRRs(meancov = mc, persistence = .2) %>% left_join(coef.npk.t) %>%
+    ggplot(aes(y=LRR_P,x=LRR_K,color=functional_group,shape=functional_group,nyears)) + 
+    geom_point() + geom_smooth(method='lm', se=F) +
+    facet_wrap(~year_trt) +
+    #geom_hline(yintercept=-1,linetype='dashed') + geom_vline(xintercept=-1,linetype='dashed') +
+    #geom_hline(yintercept=1,linetype='dashed') + geom_vline(xintercept=1,linetype='dashed') +
+    theme_bw() + labs(x='LRR K Addition - LRR Control',y='LRR P Addition - LRR Control') +
+    guides(shape = FALSE, color = FALSE)+
+    ggtitle(paste("P - K Tradeoff, mean cover >=", mc))
+  
+  grid.arrange(p1, p2, p3, nrow = 3)
+}
+
+```
+
+## Varying persistence
+
+__Parameters held constant:__
+
+* Mean cover = .05
+* Initial representation in plots = 4 (all treatment plots)
+
+```{r, fig.height=15, fig.width = 10, warning = FALSE, message = FALSE}
+
+for(pers in seq(.25, 1, by = .25)){
+  
+  cat(paste("Persistence = ", pers))
+
+  p1 = tuning_LRRs(meancov = .05, persistence = pers) %>% left_join(coef.npk.t) %>%
+    ggplot(aes(y=LRR_N,x=LRR_P,color=functional_group,shape=functional_group,nyears)) + 
+    geom_point() + geom_smooth(method='lm', se=F) +
+    facet_wrap(~year_trt) +
+    #geom_hline(yintercept=-1,linetype='dashed') + geom_vline(xintercept=-1,linetype='dashed') +
+    #geom_hline(yintercept=1,linetype='dashed') + geom_vline(xintercept=1,linetype='dashed') +
+    theme_bw() + labs(x='LRR N Addition - LRR Control',y='LRR P Addition - LRR Control') +
+    guides(shape = FALSE, color = FALSE) +
+    ggtitle(paste("N - P Tradeoff, persistence >=", pers))
+  
+  p2 = tuning_LRRs(meancov = .05, persistence = pers) %>% left_join(coef.npk.t) %>%
+    ggplot(aes(y=LRR_N,x=LRR_K,color=functional_group,shape=functional_group,nyears)) + 
+    geom_point() + geom_smooth(method='lm', se=F) +
+    facet_wrap(~year_trt) +
+    #geom_hline(yintercept=-1,linetype='dashed') + geom_vline(xintercept=-1,linetype='dashed') +
+    #geom_hline(yintercept=1,linetype='dashed') + geom_vline(xintercept=1,linetype='dashed') +
+    theme_bw() + labs(x='LRR N Addition - LRR Control',y='LRR K Addition - LRR Control') +
+    guides(shape = FALSE, color = FALSE)+
+    ggtitle(paste("N - K Tradeoff, persistence >=", pers))
+    #theme(legend.position='bottom')
+  
+  p3 = tuning_LRRs(meancov = .05, persistence = pers) %>% left_join(coef.npk.t) %>%
+    ggplot(aes(y=LRR_P,x=LRR_K,color=functional_group,shape=functional_group,nyears)) + 
+    geom_point() + geom_smooth(method='lm', se=F) +
+    facet_wrap(~year_trt) +
+    #geom_hline(yintercept=-1,linetype='dashed') + geom_vline(xintercept=-1,linetype='dashed') +
+    #geom_hline(yintercept=1,linetype='dashed') + geom_vline(xintercept=1,linetype='dashed') +
+    theme_bw() + labs(x='LRR K Addition - LRR Control',y='LRR P Addition - LRR Control') +
+    guides(shape = FALSE, color = FALSE)+
+    ggtitle(paste("P - K Tradeoff, persistence >=", pers))
+  
+  grid.arrange(p1, p2, p3, nrow = 3)
+}
+```
+
+## Varying initial representation
+
+__Parameters held constant:__
+
+* Mean cover = .05
+* Persistence = .2
+
+
+```{r, fig.height=15, fig.width = 10, warning = FALSE, message = FALSE}
+
+for(initrep in seq(1, 4, by = 1)){
+  
+  cat(paste("Initial Representation = ", initrep))
+  
+  p1 = tuning_LRRs(meancov = .05, persistence = .2, initrep = initrep) %>% left_join(coef.npk.t) %>%
+    ggplot(aes(y=LRR_N,x=LRR_P,color=functional_group,shape=functional_group,nyears)) + 
+    geom_point() + geom_smooth(method='lm', se=F) +
+    facet_wrap(~year_trt) +
+    #geom_hline(yintercept=-1,linetype='dashed') + geom_vline(xintercept=-1,linetype='dashed') +
+    #geom_hline(yintercept=1,linetype='dashed') + geom_vline(xintercept=1,linetype='dashed') +
+    theme_bw() + labs(x='LRR N Addition - LRR Control',y='LRR P Addition - LRR Control') +
+    guides(shape = FALSE, color = FALSE) +
+    ggtitle(paste("N - P Tradeoff, Initial representation >=", initrep))
+  
+  p2 = tuning_LRRs(meancov = .05, persistence = .2, initrep = initrep) %>% left_join(coef.npk.t) %>%
+    ggplot(aes(y=LRR_N,x=LRR_K,color=functional_group,shape=functional_group,nyears)) + 
+    geom_point() + geom_smooth(method='lm', se=F) +
+    facet_wrap(~year_trt) +
+    #geom_hline(yintercept=-1,linetype='dashed') + geom_vline(xintercept=-1,linetype='dashed') +
+    #geom_hline(yintercept=1,linetype='dashed') + geom_vline(xintercept=1,linetype='dashed') +
+    theme_bw() + labs(x='LRR N Addition - LRR Control',y='LRR K Addition - LRR Control') +
+    guides(shape = FALSE, color = FALSE)+
+    ggtitle(paste("N - K Tradeoff, Initial representation >=", initrep))
+    #theme(legend.position='bottom')
+  
+  p3 =tuning_LRRs(meancov = .05, persistence = .2, initrep = initrep) %>% left_join(coef.npk.t) %>%
+    ggplot(aes(y=LRR_P,x=LRR_K,color=functional_group,shape=functional_group,nyears)) + 
+    geom_point() + geom_smooth(method='lm', se=F) +
+    facet_wrap(~year_trt) +
+    #geom_hline(yintercept=-1,linetype='dashed') + geom_vline(xintercept=-1,linetype='dashed') +
+    #geom_hline(yintercept=1,linetype='dashed') + geom_vline(xintercept=1,linetype='dashed') +
+    theme_bw() + labs(x='LRR K Addition - LRR Control',y='LRR P Addition - LRR Control') +
+    guides(shape = FALSE, color = FALSE)+
+    ggtitle(paste("P - K Tradeoff, Initial representation >=", initrep))
+  
+  grid.arrange(p1, p2, p3, nrow = 3)
+}
+```
+
+# Removing detrending correction:
+
+__Parameters held constant:__
+
+* Mean cover = .05
+* Persistence = .2
+* Initial representation in year 0 = 4
+
+```{r, fig.height=15, fig.width = 10, warning = FALSE, message = FALSE}
+  p1 = tuning_LRRs(meancov = .05, persistence = .2) %>% left_join(coef.npk.raw) %>%
+    ggplot(aes(y=LRR_N,x=LRR_P,color=functional_group,shape=functional_group,nyears)) + 
+    geom_point() + geom_smooth(method='lm', se=F) +
+    facet_wrap(~year_trt) +
+    #geom_hline(yintercept=-1,linetype='dashed') + geom_vline(xintercept=-1,linetype='dashed') +
+    #geom_hline(yintercept=1,linetype='dashed') + geom_vline(xintercept=1,linetype='dashed') +
+    theme_bw() + labs(x='LRR N Addition ',y='LRR P Addition') +
+    guides(shape = FALSE, color = FALSE) +
+    ggtitle(paste("N - P Tradeoff, No Detrending"))
+  
+  p2 = tuning_LRRs(meancov = .05, persistence = .2) %>% left_join(coef.npk.raw) %>%
+    ggplot(aes(y=LRR_N,x=LRR_K,color=functional_group,shape=functional_group,nyears)) + 
+    geom_point() + geom_smooth(method='lm', se=F) +
+    facet_wrap(~year_trt) +
+    #geom_hline(yintercept=-1,linetype='dashed') + geom_vline(xintercept=-1,linetype='dashed') +
+    #geom_hline(yintercept=1,linetype='dashed') + geom_vline(xintercept=1,linetype='dashed') +
+    theme_bw() + labs(x='LRR N Addition',y='LRR K Addition') +
+    guides(shape = FALSE, color = FALSE)+
+    ggtitle(paste("N - K Tradeoff, No Detrending"))
+    #theme(legend.position='bottom')
+  
+  p3 = tuning_LRRs(meancov = .05, persistence = .2) %>% left_join(coef.npk.raw) %>%
+    ggplot(aes(y=LRR_P,x=LRR_K,color=functional_group,shape=functional_group,nyears)) + 
+    geom_point() + geom_smooth(method='lm', se=F) +
+    facet_wrap(~year_trt) +
+    #geom_hline(yintercept=-1,linetype='dashed') + geom_vline(xintercept=-1,linetype='dashed') +
+    #geom_hline(yintercept=1,linetype='dashed') + geom_vline(xintercept=1,linetype='dashed') +
+    theme_bw() + labs(x='LRR K Addition',y='LRR P Addition') +
+    guides(shape = FALSE, color = FALSE)+
+    ggtitle(paste("P - K Tradeoff, No Detrending"))
+  
+  grid.arrange(p1, p2, p3, nrow = 3)
+```
+

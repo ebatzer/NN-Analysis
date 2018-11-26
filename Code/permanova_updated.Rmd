@@ -1,0 +1,324 @@
+---
+title: "PermANOVA Updated"
+output: html_notebook
+---
+
+# Updating PermANOVA Code
+
+How to evaluate trade-offs? Models seem to show that trade-offs do not seem to 
+be present. However:
+
+- How to evaluate tradeoffs? (Model fitting?)
+- Response is a "U-shape", not just a single response surface.
+
+What might be more meaningful is to work with a more univariate response:
+
+* Similarity to control over time - does it go up with every treatment?
+* Angle of change:
+  * If N, P, and K change forms a triangle of change with control, what are
+  the angles of these changes?
+        * Can range between 0 and 180 degrees
+
+* Do sites that exhibit multiple nutrient limitation show a negative correlation
+between distance change, or positive?
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(smatr); library(testthat); library(vegan)
+library(tidyverse); library(fastDummies)
+library(data.table); library(dtplyr)
+```
+
+Compiled on `r date()`
+
+```{r Calculating LRRs, include=FALSE}
+rm(list=ls())
+
+# Read biomass data
+biomass_data <- fread('C:/Users/ebatz/Dropbox/NutNet Data/comb-by-plot-31-August-2018.csv',
+                  stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+
+biomass_data$site_code <- factor(biomass_data$site_code)
+biomass_data$trt <- factor(biomass_data$trt)
+
+#Choose sites with at least 3 years of data
+sites <- biomass_data %>% 
+  group_by(site_code,region,first_nutrient_year) %>% 
+  summarise(yrs.data = length(unique(year)),fyear = min(year), lyear = max(year)) %>% 
+  arrange(yrs.data)
+
+sites.long <- as.character(sites[yrs.data >= 3,`site_code`])
+rm(sites)
+
+bmass <- biomass_data[site_code %in% sites.long]
+
+cover <- fread('C:/Users/ebatz/Dropbox/NutNet Data/full-cover-31-August-2018.csv',
+               stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+cover.long <- cover[site_code%in%c(sites.long) & live==1,]
+cover.long <- left_join(cover.long,distinct(bmass[,.(`site_code`,`region`)]))
+cover.long$max_cover = as.numeric(cover.long$max_cover)
+```
+
+```{r, include = FALSE}
+#Choosing only our treatments of interest
+cover.long <- cover.long[trt %in% c('Control','N','P','K')]
+
+#Clean out unknowns, non-vascular plants
+# sps <- unique(cover.long$Taxon)
+#unwanted.sps <- sps[c(grep('UNKNOWN',sps),grep('BRYOPHYTE',sps),grep('LICHEN',sps))]
+#cover.long <- cover.long[!(Taxon %in% unwanted.sps | local_lifeform == 'MOSS' | functional_group == 'BRYOPHYTE')]
+# cover.long[functional_group=='GRAMINOID', functional_group := 'GRASS']
+# rm(sps,unwanted.sps)
+#rm(sps,unwanted.sps)
+
+#Choose plots with at least 3 years of data
+## This takes care of a few sites that have strange plot configurations,
+## like sgs.us
+site.plots.keep <- cover.long %>% 
+  group_by(site_code,block,plot,trt) %>% 
+  summarise(yrs.data = length(unique(year))) %>% 
+  filter(yrs.data>= 5)
+
+## Some sites have multiple control plots in a block.
+## Choosing only the lowest numbered plot belong to a treatment in each block.
+site.plots.keep <- left_join(site.plots.keep,
+                             site.plots.keep %>% group_by(site_code,block,trt) %>% 
+                               summarize(min.plot = min(plot))) %>% 
+  filter(plot==min.plot) %>% 
+  select(-min.plot,-yrs.data)
+cover.long <- left_join(site.plots.keep,cover.long)
+
+cover.long <- droplevels(cover.long) #cover.long$site_code <- factor(cover.long$site_code)
+rm(site.plots.keep)
+
+# cast long into wide
+cover.wide <- dcast(cover.long,site_code+year+block+plot+trt+year_trt ~ Taxon,
+                    value.var='max_cover', 
+                    fun.aggregate = sum,drop=T,fill=0)
+```
+
+
+```{r, include = FALSE}
+# Adding in additional info
+
+siteinfo <- biomass_data[site_code %in% sites.long, 
+                         .(`site_code`,`site_name`,`continent`,`region`,`first_nutrient_year`,`site_richness`)] %>% distinct()
+
+spsinfo <- select(data.frame(cover.long),site_code,Family:ps_path,-live) %>% distinct()
+
+#Summarizing some information about the species
+#Max cover reached in a plot in that site, CV of cover
+# coeflist.site <- left_join(coeflist.site,cover.long %>% group_by(site_code, Family, Taxon) %>% summarize(max.cover = max(max_cover), cv.cover=sd(max_cover)/mean(max_cover)))
+```
+
+Standardizing by total observations per column - it may make sense to not just look at absolute cover, but rather, the % cover of each observed plot
+
+```{r}
+cols <- c(colnames(cover.wide)[-c(1:6)])
+cover.wide[ , (cols) := lapply(.SD, "as.numeric"), .SDcols = cols]
+attr.mat = cover.wide[,1:6]
+cover.vals = data.frame(cover.wide[,-c(1:6)])
+cover.mat = round(vegan::decostand(cover.vals, method = "total"), 3)
+#cover.mat = cover.vals
+
+attr.mat = dummy_columns(attr.mat, select_columns = "trt", 
+                           remove_first_dummy = TRUE) %>%
+  replace_na(list(trt_K = 0, trt_N = 0, trt_P = 0)) %>%
+  mutate(trt_K_num = as.factor(trt_K * year_trt),
+         trt_P_num = as.factor(trt_P * year_trt),
+         trt_N_num = as.factor(trt_N * year_trt),
+         year_trt = as.factor(year_trt))
+
+attr.mat$trt_K[attr.mat$year_trt == 0] = 0
+attr.mat$trt_P[attr.mat$year_trt == 0] = 0
+attr.mat$trt_N[attr.mat$year_trt == 0] = 0
+
+head(attr.mat)
+```
+
+```{r}
+# Creating list for storage
+output = list()
+# Initializing counter variables
+counter <- 1
+
+# For all unique sites selected
+for(site in unique(attr.mat$site_code)){
+  
+  # Subset to a single site
+  com.subset <- data.frame(cover.mat)[attr.mat$site_code == site,]
+  
+  # Remove all zero columns
+  com.subset = com.subset[,colSums(com.subset) > 0]
+  
+  # Pull out relevant plot attributes for each site
+  attr.subset <- data.frame(attr.mat) %>% filter(site_code == site)
+  
+  # Check that these two matrices are the same size
+  expect_true(nrow(attr.subset) == nrow(com.subset))
+  
+  # For each block in the site:
+  for(block in unique(attr.subset$block)){
+    
+    com.panova <- com.subset[attr.subset$block == block,]
+    attr.panova <- attr.subset[attr.subset$block == block,]
+    expect_true(nrow(attr.panova) == nrow(com.panova))
+    mod_anov <- adonis(com.panova ~ year_trt + trt_K + trt_P + trt_N + as.factor(plot),
+                       data = attr.panova, method = "euclidean")
+    
+    # Saving ouput
+    output[[counter]] = list(siteinfo = attr.panova,
+                             aovtable = mod_anov$aov.tab,
+                             sitescores = mod_anov$coef.sites,
+                             specscores = mod_anov$coefficients)
+    
+    # Update counter
+    counter = counter + 1 
+  }
+}
+
+mod_anov$terms
+```
+
+```{r}
+aoutput = adonis(com.panova ~ trt_K + trt_P + trt_N,
+                       data = attr.panova)
+
+rdafit = rda(com.panova ~trt_K + trt_P + trt_N + Condition(year_trt),
+                       data = attr.panova)
+
+aoutput$coef.sites
+rownames(com.panova) = c(1:nrow(com.panova))
+rownames(attr.panova) = c(1:nrow(attr.panova))
+
+dist(com.panova[c(31,30),], method = "euclidean")
+dist(com.panova[c(29,30),], method = "euclidean")
+dist(com.panova[c(29,31),], method = "euclidean")
+
+sin(dist(com.panova[c(29,30),], method = "euclidean") / 
+dist(com.panova[c(29,31),], method = "euclidean"))
+
+
+control = com.panova[29,]
+plusK = com.panova[30,]
+plusP = com.panova[33,]
+a = plusK - control
+b = plusP - control
+acos( sum(a*b) / ( sqrt(sum(a * a)) * sqrt(sum(b * b)) ) ) * 180 / pi
+spenvcor(rdafit)
+ef = envfit(rdafit, attr.panova %>% select(trt_K, trt_P, trt_N), choices = c(1,3))
+ef
+```
+
+
+
+```{r}
+# Binds coefficients from each site together:
+coefs = data.frame()
+for(sites in 1:length(output)){
+  if(sites == 1){
+    coefs = data.frame(t(output[[sites]]$specscores))
+    coefs$Taxon =  gsub("\\.", " ",rownames(coefs))
+    coefs$site_code = rep(output[[sites]]$siteinfo$site_code[1], nrow(coefs))
+    coefs$block = rep(output[[sites]]$siteinfo$block[1], nrow(coefs))
+  }else{
+    tojoin = data.frame(t(output[[sites]]$specscores))
+    tojoin$Taxon = gsub("\\.", " ", rownames(tojoin))
+    tojoin$site_code = rep(output[[sites]]$siteinfo$site_code[1], nrow(tojoin))
+    tojoin$block = rep(output[[sites]]$siteinfo$block[1], nrow(tojoin))
+    coefs = bind_rows(coefs, tojoin)
+  }
+}
+
+# coefs_summary <- coefs %>% group_by(site_code, Taxon) %>%
+#   summarise_if(is.numeric, mean, na.rm = TRUE) %>%
+#   select(-block) %>%
+#   group_by(site_code, Taxon) %>%
+#   transmute(mean_N = mean(na.omit(trt_N4, trt_N5, trt_N6)),
+#             mean_P = mean(na.omit(trt_P4, trt_P5, trt_P6)),
+#             mean_K = mean(na.omit(trt_K4, trt_K5, trt_K6)))
+
+coefs_summary <- coefs %>% group_by(site_code, Taxon) %>%
+  summarise_if(is.numeric, mean, na.rm = TRUE) %>%
+  select(-block) %>%
+  group_by(site_code, Taxon) %>%
+  transmute(mean_N = mean(trt_N),
+            mean_P = mean(trt_P),
+            mean_K = mean(trt_K))
+
+
+
+```
+
+```{r}
+tuningtable = read.csv("../data/tuningtable_normalized.csv", 
+                       header = TRUE,
+                       stringsAsFactors = FALSE)
+head(tuningtable)
+```
+```{r}
+tuning_LRRs <- function(meancov = .05,
+                        persistence = .2,
+                     initrep = 4){
+  
+  toselect = tuningtable %>% filter(
+    mean_covControl >= meancov &
+    (tot_obsControl / (lastyear - firstyear + 1)) >= persistence &
+    pret_obsControl + pret_obsN + pret_obsP + pret_obsK >= initrep) %>%
+    select(site_code, block, Taxon, nyears, mean_covControl)
+
+  return(toselect)  
+}
+
+tuning_LRRs(meancov = .01, initrep = 0, persistence = .1) %>% 
+  left_join(coefs_summary) %>%
+  left_join(spsinfo) %>%
+  filter(site_code == "hopl.us") %>%
+  ggplot(aes(x = mean_N ,
+             y = mean_P ,
+             color = functional_group)) +
+  geom_point()  +
+  stat_smooth(method = "lm", se = FALSE)
+```
+
+```{r}
+head(spsinfo)
+spsinfo
+library(plotly)
+
+p1 <-tuning_LRRs(meancov = 0, initrep = 4) %>% left_join(coefs_summary) %>%
+  left_join(spsinfo) %>%
+  #filter(site_code == "lancaster.uk") %>%
+  ggplot(aes(x = mean_N,
+             y = mean_P,
+             color = functional_group)) +
+  geom_point(alpha = .2)  +
+  stat_smooth(method = "lm", se = FALSE, fullrange = TRUE) + 
+  guides(color = FALSE)
+ggplotly(p1)
+
+dat = tuning_LRRs(meancov = 0, initrep = 4) %>% left_join(coefs_summary) %>%
+    left_join(spsinfo)
+
+dat %>%
+  arrange(mean_N - mean_P) %>%
+  #filter(grepl("VICIA", Taxon))  %>%
+  ggplot(aes(y = mean_N - mean_P,
+           color = functional_group)) +
+  geom_boxplot() +
+  #guides(color = FALSE) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0)
+
+ggplotly(p2)
+```
+
+What is the best way to measure a tradeoff?
+
+```{r}
+
+```
+

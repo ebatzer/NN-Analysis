@@ -1,12 +1,10 @@
-*.xlsx
-*.xls
-*.csv
-*.tsv
-*.doc
-*.rdf
-*.pdf
-*.png
-*.json
-*.metadata
-*.snapshot
 .Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+Citations/
+
+*.csv
+
+To Read/

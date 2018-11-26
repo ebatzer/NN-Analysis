@@ -1,0 +1,141 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(smatr)
+library(tidyverse)
+library(data.table); library(dtplyr)
+```
+
+Compiled on `r date()`
+
+```{r Calculating LRRs, include=FALSE}
+rm(list=ls())
+
+# Read biomass data
+biomass_data <- fread('C:/Users/ebatz/Dropbox/NutNet Data/comb-by-plot-09-April-2018.csv',
+                  stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+
+biomass_data$site_code <- factor(biomass_data$site_code)
+biomass_data$trt <- factor(biomass_data$trt)
+
+#Choose sites with at least 3 years of data
+sites <- biomass_data %>% 
+  group_by(site_code,region,first_nutrient_year) %>% 
+  summarise(yrs.data = length(unique(year)),fyear = min(year), lyear = max(year)) %>% 
+  arrange(yrs.data)
+
+sites.long <- as.character(sites[yrs.data >= 3,`site_code`])
+rm(sites)
+
+bmass <- biomass_data[site_code %in% sites.long]
+
+cover <- fread('C:/Users/ebatz/Dropbox/NutNet Data/full-cover-09-April-2018.csv',
+               stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+cover.long <- cover[site_code%in%c(sites.long) & live==1,]
+cover.long <- left_join(cover.long,distinct(bmass[,.(`site_code`,`region`)]))
+cover.long$max_cover = as.numeric(cover.long$max_cover)
+```
+
+```{r, include = FALSE}
+#Choosing only our treatments of interest
+cover.long <- cover.long[trt %in% c('Control','N','P','K','NPK','Fence')]
+
+#Clean out unknowns, non-vascular plants
+sps <- unique(cover.long$Taxon)
+unwanted.sps <- sps[c(grep('UNKNOWN',sps),grep('BRYOPHYTE',sps),grep('LICHEN',sps))]
+cover.long <- cover.long[!(Taxon %in% unwanted.sps | local_lifeform == 'MOSS' | functional_group == 'BRYOPHYTE')]
+cover.long[functional_group=='GRAMINOID', functional_group := 'GRASS']
+rm(sps,unwanted.sps)
+
+#Choose plots with at least 3 years of data
+## This takes care of a few sites that have strange plot configurations,
+## like sgs.us
+site.plots.keep <- cover.long %>% 
+  group_by(site_code,block,plot,trt) %>% 
+  summarise(yrs.data = length(unique(year))) %>% 
+  filter(yrs.data>=3)
+
+## Some sites have multiple control plots in a block.
+## Choosing only the lowest numbered plot belong to a treatment in each block.
+site.plots.keep <- left_join(site.plots.keep,
+                             site.plots.keep %>% group_by(site_code,block,trt) %>% 
+                               summarize(min.plot = min(plot))) %>% 
+  filter(plot==min.plot) %>% 
+  select(-min.plot,-yrs.data)
+
+cover.long <- left_join(site.plots.keep,cover.long)
+cover.long <- droplevels(cover.long) #cover.long$site_code <- factor(cover.long$site_code)
+rm(site.plots.keep)
+
+# cast long into wide
+cover.wide <- dcast(cover.long,site_code+year+block+plot+trt+year_trt ~ Taxon,
+                    value.var='max_cover', 
+                    fun.aggregate = sum,drop=T,fill=0)
+```
+
+
+```{r, include = FALSE}
+# Adding in additional info
+
+siteinfo <- biomass_data[site_code %in% sites.long, 
+                         .(`site_code`,`site_name`,`continent`,`region`,`first_nutrient_year`,`site_richness`)] %>% distinct()
+
+spsinfo <- select(data.frame(cover.long),site_code,Family:ps_path,-live) %>% distinct()
+
+#Summarizing some information about the species
+#Max cover reached in a plot in that site, CV of cover
+# coeflist.site <- left_join(coeflist.site,cover.long %>% group_by(site_code, Family, Taxon) %>% summarize(max.cover = max(max_cover), cv.cover=sd(max_cover)/mean(max_cover)))
+```
+
+Standardizing by total observations per column - it may make sense to not just look at absolute cover, but rather, the % cover of each observed plot
+
+```{r}
+cols <- c(colnames(cover.wide)[-c(1:6)])
+cover.wide[ , (cols) := lapply(.SD, "as.numeric"), .SDcols = cols]
+cover.atts = cover.wide[,1:6]
+cover.vals = data.frame(cover.wide[,-c(1:6)])
+cover.stdize = round(vegan::decostand(cover.vals, method = "total"),2)
+cover.mat = bind_cols(cover.atts, cover.stdize)
+cover.mat[1:10, 1:10]
+```
+
+What species to keep? Ideally, we would have species that are:
+
+- Present in all treatments (unlikely), or at least present in all treatments to start
+- Persistent through time
+
+```{r}
+dat <- cover.long[,iden := paste0(site_code,Taxon,block)]
+dat <- dat[iden %in% unique(obs.keep$iden)]
+obs.keep[,iden:= NULL]
+#convert to wide, but only at the site-block scale, to avoid too many zeros
+# Add minimum observed percent cover (0.01) to all values - to the wide table
+# Convert back to long
+dat2 <- data.table()
+#i='cdcr.us' ; j = 1
+for (i in unique(dat$site_code)) {
+  subdat <- dat[site_code==i]
+  for (j in unique(subdat$block)) {
+    subdat2 <- subdat[block==j]
+    dat2.wide <- dcast(subdat2,site_code+year+year_trt+block+plot+trt ~ Taxon,value.var='max_cover', fun.aggregate = sum,drop=T,fill=0)
+    #Now add 0.01 to all values
+    dat2.wide[,7:ncol(dat2.wide)] <- dat2.wide[,7:ncol(dat2.wide)] + 0.01
+    dat2.long <- melt(dat2.wide,id.vars=c(1:6),variable.name='Taxon',value.name='max_cover')
+    dat2 <- bind_rows(dat2,dat2.long)
+  }
+}
+
+rm(dat2.long,dat2.wide,i,j,subdat,subdat2)
+
+
+```
+
+
+
+I am concerned that detrending in this fashion is predisposed to constructing the 
