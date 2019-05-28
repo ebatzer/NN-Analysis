@@ -60,15 +60,14 @@ library(testthat)
 
 ################################################################################
 # Loading in dataset (April 2018 Data)
-cov.long <- fread('C:/Users/ebatzer/Dropbox/NutNet Data/full-cover-09-April-2018.csv',
+cov.long <- fread('C:/Users/ebatz/Dropbox/NutNet Data/full-cover-25-January-2019.csv',
                   stringsAsFactors = FALSE,
                   na.strings = c('NA','NULL'))
 
-plot.descriptions <- read.csv("C:/Users/ebatzer/Dropbox/NutNet Data/all-plot-descriptions-1-December-2017.csv",
+plot.descriptions <- read.csv("C:/Users/ebatz/Dropbox/NutNet Data/comb-by-plot-clim-soil-diversity-25-Jan-2019.csv",
                               stringsAsFactors = FALSE)
 
-
-soil.chars <- read.csv("C:/Users/ebatzer/Dropbox/NutNet Data/comb-by-plot-clim-soil-diversity-09-Apr-2018.csv",
+soil.chars <- read.csv("C:/Users/ebatz/Dropbox/NutNet Data/soil-nutrients-25-January-2019.csv",
                               stringsAsFactors = FALSE)
 
 # Choose identifying variables
@@ -111,7 +110,10 @@ pretrt = soil.chars %>%
 
 # Number of sites with pretrt soil data:
 length(unique(pretrt$site_code))
+```
 
+
+```{r}
 # Subsetting species matrix by these site codes
 soil.chars = soil.chars[soil.chars$site_code %in% unique(pretrt$site_code), ] %>% filter(year_trt == 0)
 plot.sp.mat = plot.sp.mat[plot.sp.mat$site_code %in% unique(pretrt$site_code), ]
@@ -120,13 +122,36 @@ plot.sp.mat = plot.sp.mat %>% filter(year_trt == 0)
 soil.means = soil.chars %>% group_by(site_code) %>% 
   select(c("pct_C", "pct_N", "ppm_P", "ppm_K", "ppm_Ca", "ppm_Mg", "ppm_S", 
            "ppm_Na", "ppm_Zn", "ppm_Mn", "ppm_Fe", "ppm_Cu", "ppm_B", "pH")) %>%
-  summarise_all(funs(mean = mean,
-                     sd = sd))
+  mutate_all(as.numeric) %>%
+  summarise_all(.funs = list(mean = as.function(function(x){mean(na.omit(x))}),
+                             sd = as.function(function(x){sd(na.omit(x))})))
+```
 
-soil.zscores = soil.chars %>% group_by(site_code, block, plot, trt, year, year_trt) %>% 
+```{r}
+calc_zscores <- function(x){(x - mean(na.omit(x))) / sd(na.omit(x))}
+
+sm = soil.means %>% 
+  select(site_code, pct_C_mean, pct_N_mean, ppm_P_mean, ppm_K_mean) 
+
+pr = plot.descriptions %>%
+  group_by(site_code) %>%
+  summarise_at(vars(Ambient_PAR, RAIN_PET),
+               as.function(function(x){mean(na.omit(x))}))
+
+# Absolute site resource availability
+res_avail_abs = left_join(sm, pr, by = "site_code")
+
+# Relative site resource availability
+res_avail_rel = left_join(sm, pr, by = "site_code") %>%
+  mutate_if(is.numeric, calc_zscores)
+```
+
+```{r}
+soil.zscores = soil.chars %>% group_by(site_code, block, plot, Treatment, year, year_trt) %>% 
   select(c("plot", "pct_C", "pct_N", "ppm_P", "ppm_K", "ppm_Ca", "ppm_Mg", "ppm_S", 
            "ppm_Na", "ppm_Zn", "ppm_Mn", "ppm_Fe", "ppm_Cu", "ppm_B", "pH")) %>%
   left_join(soil.means, by = c("site_code")) %>%
+  mutate_all(as.numeric) %>%
   mutate(C_z = (pct_C - pct_C_mean) / pct_C_sd,
          N_z = (pct_N - pct_N_mean) / pct_N_sd,
          P_z = (ppm_P - ppm_P_mean) / ppm_P_sd,

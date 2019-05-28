@@ -1,0 +1,186 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+```{r, echo = FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+# Loading necessary packages
+library(ggplot2) # Figure plotting
+library(tidyverse) # Data manipulation
+library(vegetarian) # Exponentiated diversity indices (Hill Numbers)
+library(lme4) # Linear mixed effects models
+library(vegan) # General ecology functions
+library(data.table) # Fast reading of data tables
+library(testthat) # Unit testing
+library(plotly) # Interactive graphics
+library(metafor) # Response ratios
+library(testthat)
+library(fastDummies)
+library(grid)
+library(dtplyr)
+library(gridExtra)
+
+# Loading in dataset (Updated to Feb 21st 2019)
+cov.long <- read.csv('../data/full-cover-21-February-2019.csv',
+                  stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+
+plot.descriptions <- read.csv("../data/comb-by-plot-clim-soil-diversity-21-Feb-2019.csv",
+                              stringsAsFactors = FALSE)
+
+soil.chars <- read.csv("../data/soil-nutrients-21-February-2019.csv",
+                              stringsAsFactors = FALSE)
+
+biomass <- read.csv("../data/full-biomass-22-February-2019.csv")
+
+# Choose identifying variables
+ids <- c('site_code','year','year_trt', 'block','plot','trt')
+
+################################################################################
+### Selecting Sites
+################################################################################
+
+# Remove non-live percent cover esimates
+cov.long <- cov.long[cov.long$live==1,]
+
+plot.sp.mat <- dcast(cov.long,site_code+year+block+plot+trt+year_trt ~ Taxon,value.var='max_cover', 
+                     fun.aggregate = sum,drop=T,fill=0)
+
+plot.sp.mat$block <- as.numeric(plot.sp.mat$block)
+plot.sp.mat$plot <- as.numeric(plot.sp.mat$plot)
+plot.sp.mat$year <- as.numeric(plot.sp.mat$year)
+plot.sp.mat$year_trt <- as.numeric(plot.sp.mat$year_trt)
+
+sites_toselect = plot.sp.mat %>% 
+  filter(year_trt == 0) %>%
+  group_by(site_code) %>% 
+  summarise(num_block = length(unique(block)),
+            num_plots = n()) %>%
+  filter(num_block == 3 & num_plots == 30) %>%
+  select(site_code)
+
+sites_toselect = c(sites_toselect$site_code)
+plot.sp.mat = plot.sp.mat %>% filter(site_code %in% sites_toselect &
+                                     year_trt == 0)
+
+matlist = split(plot.sp.mat[, -c(1:6)], plot.sp.mat$site_code)
+sacs = lapply(matlist, specaccum, method = "random")
+
+fit_SAC = function(x){
+  richness = x$richness
+  sites = x$sites
+  mod = lm(log(richness) ~ log(sites))
+  return(coef(mod))
+}
+
+sacfits = data.frame(t(bind_rows(lapply(sacs, fit_SAC)))) %>%
+  rownames_to_column() %>%
+  rename("site_code" = rowname,
+         "intercept" = X1,
+         "slope" = X2)
+
+par(mfrow = c(1,2))
+hist(sacfits$intercept)
+hist(sacfits$slope)
+
+comb_byplot = read.csv('../data/comb-by-plot-22-February-2019.csv') %>%
+  filter(year_trt == 0) %>%
+  group_by(site_code) %>%
+  mutate(total_mass = as.numeric(total_mass)) %>%
+  summarise(meanprod = mean(na.omit(total_mass)),
+            cvprod = var(na.omit(total_mass)) / mean(na.omit(total_mass)),
+            type = unique(habitat)) %>%
+  filter(cvprod != 0 &
+           meanprod != 0) 
+```
+
+```{r}
+par(mfrow = c(1,1))
+plot(comb_byplot$meanprod ~ sqrt(comb_byplot$cvprod),
+     xlab = "sqrt(Coefficient of Variation",
+     ylab = "Mean Productivity")
+```
+```{r}
+makecurve <- function(x) exp(x$intercept) * seq(1, 30, by = 1) ^ x$slope
+rbind(data.frame(lapply(split(sacfits, sacfits$site_code), makecurve))) %>%
+  cbind(plots = c(1:30)) %>%
+  gather(key = "site_code", value = "diversity", -plots) %>%
+  group_by(site_code) %>%
+  mutate(diversity = diversity / max(diversity)) %>%
+  left_join(comb_byplot) %>%
+  ggplot(aes(x = plots,
+             y = diversity,
+             color = sqrt(cvprod),
+             group = site_code)) +
+  geom_line() +
+  viridis::scale_color_viridis() +
+  ylab("Diversity (Proportional of Site Total)")
+
+rbind(data.frame(lapply(split(sacfits, sacfits$site_code), makecurve))) %>%
+  cbind(plots = c(1:30)) %>%
+  gather(key = "site_code", value = "diversity", -plots) %>%
+  group_by(site_code) %>%
+  mutate(diversity = diversity / max(diversity)) %>%
+  left_join(comb_byplot) %>%
+  ggplot(aes(x = plots,
+             y = diversity,
+             color = meanprod,
+             group = site_code)) +
+  geom_line() +
+  viridis::scale_color_viridis() +
+  ylab("Diversity (Proportional of Site Total)")
+
+```
+
+```{r}
+
+p1 = left_join(sacfits, comb_byplot) %>%
+  ggplot(aes(x = meanprod, 
+             y = intercept,
+             color = type)) +
+  geom_point() +
+  geom_line(stat="smooth", method = "lm", se = FALSE, alpha = .5) +
+  geom_line(stat="smooth", method = "lm", se = FALSE, aes(color = NULL), size = 1.25, linetype = 2)+
+  ggtitle("Variation in Intercept") +
+  guides(color = FALSE)
+
+p2 = left_join(sacfits, comb_byplot) %>%
+  ggplot(aes(x = sqrt(cvprod), 
+             y = intercept,
+             color = type)) +
+  geom_point() +
+  geom_line(stat="smooth", method = "lm", se = FALSE, alpha = .5) +
+  geom_line(stat="smooth", method = "lm", se = FALSE, aes(color = NULL), size = 1.25, linetype = 2)+
+  ggtitle("Variation in Intercept")+
+  guides(color = FALSE)
+
+grid.arrange(p1, p2, nrow = 1)
+
+p3 = left_join(sacfits, comb_byplot) %>%
+  ggplot(aes(x = meanprod, 
+             y = slope,
+             color = type)) +
+  geom_point() +
+  geom_line(stat="smooth", method = "lm", se = FALSE, alpha = .5) +
+  geom_line(stat="smooth", method = "lm", se = FALSE, aes(color = NULL), size = 1.25, linetype = 2)+
+  ggtitle("Variation in Slope")+
+  guides(color = FALSE)
+
+p4 = left_join(sacfits, comb_byplot) %>%
+  ggplot(aes(x = sqrt(cvprod), 
+             y = slope,
+             color = type)) +
+  geom_point() +
+  geom_line(stat="smooth", method = "lm", se = FALSE, alpha = .5) +
+  geom_line(stat="smooth", method = "lm", se = FALSE, aes(color = NULL), size = 1.25, linetype = 2) +
+  ggtitle("Variation in Slope")+
+  guides(color = FALSE)
+
+grid.arrange(p3, p4, nrow = 1)
+```
+

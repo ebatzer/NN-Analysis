@@ -1,0 +1,240 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Individual Responses
+
+To better understand why certain sites express correlations in their N, P, and K 
+response trajectories, we can look at the individual responses of species that
+constitute these community-level effects.
+
+From existing work on nutrient enrichment (both in NutNet and other meta-analysis), 
+there are a number of patterns that might be expected:
+
+* Dominant species respond more positively to nutrient enrichment than non-dominants
+* Certain functional groups (e.g. legumes) are likely to respond to P, K enrichment over others
+
+These relationships may also give us more clues on what sort of site-level covariates
+might be interested.
+
+Here, I've taken the individual coefficients estimated from part 2 and plotted them
+vs. a series of potential individual-level covariates. I've highlighted relationships
+between dominance and functional group here, but a bunch more exploration is possible.
+
+In the process of calculating these, I've produced a "tuning table" that has a number
+of features that can also be used to subset the dataset prior to conducting these analyses:
+
+* Pretrt presence / absence and cover
+* Total observations over the course of sampling
+* Pretrt dominance and control dominance (abundance / total observed cover)
+
+```{r, message = FALSE, echo = FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+library(tidyverse);library(data.table);library(dtplyr); library(gridExtra); library(grid)
+
+ttable <- fread("../Data/tuningtable.csv")
+
+specscores_full <- read.csv("../Data/specscores.csv")
+
+# taxonomy <- fread('C:/Users/ebatz/Dropbox/NutNet Data/Nutnet-site-taxonomy.csv',
+#                stringsAsFactors = FALSE,
+#                na.strings = c('NA','NULL'))
+
+cover <- fread('C:/Users/ebatzer/Dropbox/NutNet Data/full-cover-22-February-2019.csv')
+
+taxonomy = cover %>% group_by(site_code, Taxon) %>%
+  summarise(ps_path = unique(ps_path),
+            local_lifespan = unique(local_lifespan),
+            functional_group = unique(functional_group),
+            N_fixer = unique(N_fixer))
+
+site.covars <- read.csv("../Data/site_covars.csv")
+
+site_pvals = read.csv("composition_pvalues.csv", header = TRUE, stringsAsFactors = FALSE)
+site_pvals = site_pvals %>% rename(site.K = trt_K_num, site.N = trt_N_num, site.P = trt_P_num)
+
+dot_full = read.csv("../data/dot_full.csv")
+
+library(gridExtra)
+```
+
+```{r}
+specchars = left_join(ttable, taxonomy) %>%
+  mutate(Taxon = gsub("\\.", " ", Taxon))
+
+specscores_long = specscores_full %>%
+  gather(key = "Taxon",
+         value = "coef", 
+         -c(site, trt)) %>%
+  mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
+  rename("site_code" = site)
+
+full_responses = specscores_long %>% inner_join(specchars)
+```
+
+# Plotting relationships
+
+Across all three fertilization treatment pairs (N-P, N-K, and P-K), responses
+seem to be quite correlated. I've only showed correlations between the response
+to N enrichment (trt_N) and P enrichment (trt_P):
+
+```{r}
+full_responses %>% 
+  spread(key = trt, value = coef) %>%
+  ggplot(aes(x = trt_N, y = trt_P)) +
+  geom_point(aes(size = dominanceControl, color = functional_group), alpha = .4) +
+  stat_smooth(method = "lm", se = FALSE) +
+  ggtitle("All Responses")
+```
+
+However, there is still a significant amount of site-to-site variation in the
+shape of this line, equivalent to the correlations we examined in part 2. If we 
+examine sites across the N-P tradeoff distribution, we might be able to 
+get a sense of what species drive community-level trends.
+
+#### Sites highlighted:
+
+* Pinjarra Hills - Most negative NP response correlation
+
+* Sagehen - Median NP response correlation
+
+* Konza - Strongest NP response correlation
+
+Some sites seem to show evidence that certain functional groups may be skewing these relationships -
+Sagehen, for example, shows a legume species with high P affinity, but a weak positive response to N.
+
+```{r}
+full_responses %>% 
+  spread(key = trt, value = coef) %>%
+  filter(site_code == dot_full$site[dot_full$NP == min(dot_full$NP)]) %>%
+  ggplot(aes(x = trt_N, y = trt_P)) +
+  geom_point(aes(size = dominanceControl, color = functional_group)) +
+  stat_smooth(method = "lm", se = FALSE) +
+  ggtitle("pinj.au")
+
+full_responses %>% 
+  spread(key = trt, value = coef) %>%
+  filter(site_code == dot_full$site[dot_full$NP == median(dot_full$NP[-1])]) %>%
+  ggplot(aes(x = trt_N, y = trt_P)) +
+  geom_point(aes(size = dominanceControl, color = functional_group)) +
+  stat_smooth(method = "lm", se = FALSE) +
+  ggtitle("sage.us")
+
+full_responses %>% 
+  spread(key = trt, value = coef) %>%
+  filter(site_code == dot_full$site[dot_full$NP == max(dot_full$NP)]) %>%
+  ggplot(aes(x = trt_N, y = trt_P)) +
+  geom_point(aes(size = dominanceControl, color = functional_group)) +
+  stat_smooth(method = "lm", se = FALSE) +
+  ggtitle("konz.us")
+```
+
+#### In a univariate perspective, there does not appear to be any significant correlation between functional group and response, however:
+
+```{r, fig.height=10, fig.width=5}
+p1 = full_responses %>%  
+  spread(key = trt, value = coef) %>%
+  filter(dominanceControl > .05) %>%
+  ggplot(aes(x = functional_group, 
+             y = trt_N,
+             fill = functional_group)) +
+  geom_boxplot()+
+  ggtitle("N Response Coefficients")
+
+
+p2 = full_responses %>%  
+  spread(key = trt, value = coef) %>%
+  filter(dominanceControl > .05) %>%
+  ggplot(aes(x = functional_group, 
+             y = trt_P,
+             fill = functional_group)) +
+  geom_boxplot() +
+  ggtitle("P Response Coefficients")
+
+
+p3 = full_responses %>%  
+  spread(key = trt, value = coef) %>%
+  filter(dominanceControl > .05) %>%
+  ggplot(aes(x = functional_group, 
+             y = trt_K,
+             fill = functional_group)) +
+  geom_boxplot() +
+  ggtitle("K Response Coefficients")
+
+grid.arrange(p1,p2,p3,
+             top = textGrob("Dominance-Response Relationships",gp=gpar(fontsize=20,font=3)),
+             nrow = 3)
+```
+
+#### Nor are there strong relationships with dominance (proportional of total cover in control plots over all years)
+
+```{r, fig.height=10, fig.width=5}
+p1 = full_responses %>%  
+  spread(key = trt, value = coef) %>%
+  filter(dominanceControl > .25) %>%
+  ggplot(aes(x = dominanceControl, 
+             y = trt_P,
+             color = functional_group)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, fullrange = TRUE) +
+  ggtitle("N Response Coefficients")
+
+p2 = full_responses %>%  
+  spread(key = trt, value = coef) %>%
+  filter(dominanceControl > .25) %>%
+  ggplot(aes(x = dominanceControl, 
+             y = trt_N,
+             color = functional_group)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, fullrange = TRUE)+
+  ggtitle("P Response Coefficients")
+
+p3 = full_responses %>%  
+  spread(key = trt, value = coef) %>%
+  filter(dominanceControl > .25) %>%
+  ggplot(aes(x = dominanceControl, 
+             y = trt_K,
+             color = functional_group)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, fullrange = TRUE)+
+  ggtitle("K Response Coefficients")
+
+
+grid.arrange(p1,p2,p3,
+             top = textGrob("Dominance-Response Relationships",gp=gpar(fontsize=20,font=3)),
+             nrow = 3)
+```
+
+#### However, some additional exploration suggests that while species tend to share similar responses to all nutrient additions, functional groups exhibit differences in their deviations from this overall relationship.
+
+Legumes, for example, seem to have a higher affinity to P than would be predicted by their +N treatment responses (same with K enrichment), while grasses have slightly stronger N affinity.
+
+These results, calculated by examining residuals relative to the overall trend, are not shown graphically.
+
+
+```{r, include = FALSE}
+formodels = full_responses %>%  
+  spread(key = trt, value = coef) %>%
+  filter(functional_group %in% c("FORB", "GRAMINOID", "GRASS", "LEGUME"))
+
+cat("Linear model of N-P relationship:\n")
+summary(lm(trt_P ~ 0 + trt_N + functional_group, data = formodels))
+cat("Linear model of N-K relationship:\n")
+summary(lm(trt_K ~ 0 + trt_N + functional_group, data = formodels))
+cat("Linear model of P-K relationship:\n")
+summary(lm(trt_P ~ 0 + trt_K + functional_group, data = formodels))
+```
+
+# Next Steps
+
+Before continuing to 
+
+
+
+
+
+

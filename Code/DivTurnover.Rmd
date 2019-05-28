@@ -1,0 +1,267 @@
+---
+title: "Diversity-Turnover Analyses"
+author: "Evan Batzer"
+output:
+  html_document:
+    df_print: paged
+---
+
+### Steps to Analysis:
+
+Subset into 2 separate datasets
+
+1) Spatial datasets, consisting of all observational data with soil resource measurements (pretreatment only)
+
+2) Temporal datasets, consisting of control plots with *5 years of data*, soil resource measurements.
+
+    2a) Find those sites that contain climatic variables from Siddharth
+    
+3) Calculate alpha, beta, and gamma diversity between each site
+
+    3a) Do so in a flexible way that can allow for different sorts of metrics, not just richness, but also ENS.
+    
+### Loading packages
+
+```{r, message = FALSE, echo = FALSE}
+# Loading necessary packages
+library(ggplot2) # Figure plotting
+library(tidyverse) # Data manipulation
+library(lme4) # Linear mixed effects models
+library(vegan) # General ecology functions
+library(data.table) # Fast reading of data tables
+library(testthat) # Unit testing
+library(dtplyr) # Data.table dplyr functions
+library(JostDiv) # Exponentiated diversity indices (Hill Numbers)
+library(gridExtra)
+```
+    
+### Reading in Datasets
+
+```{r}
+# Biomass data
+biomass_data <- fread("../Data/comb-by-plot-22-February-2019.csv",
+                  stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+
+# Loading in dataset (Updated to Feb 22st 2019)
+cover <- fread('../Data/full-cover-22-February-2019.csv',
+                  stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+
+# Plot descriptions
+plot.descriptions <-  read.csv("../Data/comb-by-plot-clim-soil-diversity-22-Feb-2019.csv",
+                              stringsAsFactors = FALSE)
+
+# Soil characteristics
+soil.chars <- read.csv("../Data/soil-nutrients-21-February-2019.csv",
+                              stringsAsFactors = FALSE)
+
+# Site covariates
+site.covars <- read.csv("../Data/site_covars.csv",
+                        stringsAsFactors = FALSE)
+
+```
+
+### Filtering
+
+```{r}
+sites_wsoil <- plot.descriptions %>% 
+  filter(!is.na(pct_C) & !is.na(pct_N)) %>%
+  distinct(site_code)
+
+sitevec = c(sites_wsoil$site_code)
+```
+
+# Spatial diversity
+  
+```{r}
+com_spatial <- cover %>% 
+  filter(year_trt == 0 & site_code %in% sitevec) %>% 
+  filter(live == 1)
+
+cover.wide <- data.frame(com_spatial) %>%
+  select(site_code, block, plot, Taxon, max_cover) %>%
+  dcast(site_code+block+plot ~ Taxon,
+                    value.var='max_cover', 
+                    fun.aggregate = sum,drop=T,fill=0)
+
+calc_div = function(x, q){
+  
+  sample_p = vegan::decostand(x, method = "total")
+  alpha = apply(sample_p, MARGIN = 1,
+                d_calc, 
+                q, 
+                sample.weight = 1)
+  
+  comm_p = vegan::decostand(colSums(x), method = "total")
+  gamma = d_calc(comm_p, q, sample.weight = 1)
+  
+  output = data.frame(alpha = alpha,
+                      gamma = rep(gamma, length(alpha)),
+                      beta = alpha / gamma)
+  
+  return(output)
+  
+}
+
+spat_div = cover.wide %>% group_by(site_code, block) %>%
+  do(calc_div(.[,-c(1:3)], q = 0))
+
+write.csv("../Data/diversity_spatial_full.csv",
+          x = spat_div)
+
+spat_div = spat_div %>%
+  summarise(alpha = mean(alpha),
+            beta = mean(beta),
+            gamma = mean(gamma))
+```
+
+### Error checking & figures
+
+```{r}
+summary(spat_div)
+```
+
+```{r, fig.height=6, fig.width=10}
+p1 = spat_div %>% 
+  ggplot(aes(x = alpha)) +
+  geom_histogram() +
+  ggtitle("Spatial alpha (plot) diversity")
+
+p2 = spat_div %>% 
+  ggplot(aes(x = beta)) +
+  geom_histogram() +
+  ggtitle("Spatial beta (plot \ block) diversity")
+
+p3 = spat_div %>% 
+  ggplot(aes(x = gamma)) +
+  geom_histogram() +
+  ggtitle("Spatial gamma (block) diversity")
+
+grid.arrange(p1, p2, p3, nrow = 1)
+```
+
+```{r, fig.height=6, fig.width=10}
+p1 = spat_div %>%
+  ggplot(aes(x = alpha, y = gamma, color = site_code)) +
+  geom_point(alpha = .2) +
+  guides(color = FALSE) +
+  stat_smooth(aes(color = FALSE), method = "lm")
+
+p2 = spat_div %>%
+  ggplot(aes(x = alpha, y = beta, color = site_code)) +
+  geom_point(alpha = .2) +
+  guides(color = FALSE) +
+  stat_smooth(aes(color = FALSE), method = "lm")
+
+p3 = spat_div %>%
+  ggplot(aes(x = gamma, y = beta, color = site_code)) +
+  geom_point(alpha = .2) +
+  guides(color = FALSE) +
+  stat_smooth(aes(color = FALSE), method = "lm")
+
+grid.arrange(p1, p2, p3, nrow = 1)
+
+```
+
+## Temporal Diversity
+
+To capture temporal diversity, I examine the amount of turnover present within the first 5 years of data 
+
+```{r}
+sites_temp = cover %>% select(site_code, year_trt) %>%
+  group_by(site_code) %>%
+  summarise(maxyr = max(year_trt),
+            minyr = min(year_trt)) %>%
+  filter(maxyr >= 4 & minyr == 0)
+
+com_temporal <- cover %>% 
+  filter(year_trt < 5 & trt == "Control" & site_code %in% c(sites_temp$site_code)) %>% 
+  filter(live == 1)
+
+cover.wide <- data.frame(com_temporal) %>%
+  select(site_code, block, plot, year_trt, Taxon, max_cover) %>%
+  dcast(site_code+block+plot+year_trt ~ Taxon,
+                    value.var='max_cover', 
+                    fun.aggregate = sum,drop=T,fill=0)
+
+enoughcoverage = cover.wide %>% group_by(site_code, block, plot) %>%
+  summarise(count = length(unique(year_trt))) %>%
+  filter(count == 5)
+
+calc_div = function(x, q){
+  
+  sample_p = vegan::decostand(x, method = "total")
+  alpha = apply(sample_p, MARGIN = 1,
+                d_calc, 
+                q, 
+                sample.weight = 1)
+  
+  comm_p = vegan::decostand(colSums(x), method = "total")
+  gamma = d_calc(comm_p, q, sample.weight = 1)
+  
+  output = data.frame(alpha = alpha,
+                      gamma = rep(gamma, length(alpha)),
+                      beta = alpha / gamma)
+  
+  return(output)
+  
+}
+
+temp_div = right_join(cover.wide, enoughcoverage) %>% 
+  select(-count) %>% 
+  group_by(site_code, block, plot) %>%
+  do(calc_div(.[,-c(1:4)], q = 0)) 
+
+write.csv("../Data/diversity_temporal_full.csv",
+          x = temp_div)
+
+temp_div = temp_div %>%
+  summarise(alpha = mean(alpha),
+            beta = mean(beta),
+            gamma = mean(gamma))
+```
+
+```{r, fig.height=6, fig.width=10}
+p1 = temp_div %>% 
+  ggplot(aes(x = alpha)) +
+  geom_histogram() +
+  ggtitle("Temporal alpha (plot) diversity")
+
+p2 = temp_div %>% 
+  ggplot(aes(x = beta)) +
+  geom_histogram() +
+  ggtitle("Temporal beta (plot \ block) diversity")
+
+p3 = temp_div %>% 
+  ggplot(aes(x = gamma)) +
+  geom_histogram() +
+  ggtitle("Temporal gamma (block) diversity")
+
+grid.arrange(p1, p2, p3, nrow = 1)
+```
+
+# Are temporal and spatial beta diversity correlated to one another?
+
+```{r}
+df1 = temp_div %>% rename("temp_alpha" = alpha,
+                    "temp_beta" = beta,
+                    "temp_gamma" = gamma)
+
+df2 = spat_div %>% rename("spat_alpha" = alpha,
+                    "spat_beta" = beta,
+                    "spat_gamma" = gamma)
+
+full_join(df1, df2) %>%
+  ggplot(aes(x = temp_beta,
+             y = spat_beta, 
+             color = site_code)) +
+  geom_point(alpha = .4) +
+  guides(color = FALSE) +
+  stat_smooth(aes(color = FALSE), method = "lm") +
+  geom_line(stat = "smooth",
+            method = "lm", se = FALSE, alpha = .2) +
+  ylim(.2, .8)
+
+```
+

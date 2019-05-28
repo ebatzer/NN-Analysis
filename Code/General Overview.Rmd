@@ -1,0 +1,42 @@
+---
+title: "General Overview"
+output: html_notebook
+---
+
+# Abstract + Motivation
+
+It is well understood that multiple nutrient limitation structures many plant communities, wherein plant growth and survival is determined by competition across a series of shared resource axes. Niche dimensionality (Harpole et al. 2007, 2016) is a mechanism of coexistence predicated on species-specific trade-offs in resource use. While niche dimensionality has been explored and observed at the community scale, there is a limited exploration of the mechanisms that drive the development of these species-level tradeoffs and their association with certain species characteristics.
+
+<center>
+![](../Figures/Harpole_FuncEcol.png){width=500px}
+</center>
+
+For resource co-limitation and species-specific tradeoffs in resource use to be present within a community, we hypothesize that two key characteristics must be met:
+
+1. Sufficient species and functional diversity to contain variation in resource use
+2. Significant spatial variation in environmental resource availability to be a driver of community structure. 
+
+Subsequently, the strength of trade-offs in resource use may be correlated with species characteristics and life history strategies - greater demand for phosphorus or nitrogen and response to enrichment, for example, may correlate with legume and graminoid functional group identity, respectively. Assessing global patterns of resource use tradeoffs, environmental parameters that are correlated with the strength of these tradeoffs, and associated species characteristics sheds light onto key mechanisms that may structure niche dimensionality in a global context.
+
+To evaluate these resource use tradeoffs, we aim to explore both experimental and observational plot data from the Nutrient Network to address three key aims:
+
+  1. To what degree do soil concentrations of nitrogen, phosphorus, and potassium drive spatial variation in community structure (based on the observational dataset, in the same manner as Harpole and Tilman. 2007)?
+  2. Following single-nutrient enrichment treatments (N, P, and Kμ), do species present trade-offs in abundance responses? What site-level characteristics best explain the strength of observed trade-offs?
+  3. Are species affinities for different resource treatments correlated to functional and phylogenetic characteristics? 
+
+(Perhaps another way to restate this question is whether fertilization effects are a function of resource supply or identity)
+
+# Some Notes on Previous Approaches
+
+Initially, we attempted to compare species responses to fertilization using a log-response-ratio (LRR) or detrended
+log-response ratio, following methods of Lind et al. (2013). However, some additional exploration of this method using
+simulated data suggests that comparison of LRR or detrended LRRs between treatments that have negatively correlated effects
+may produce positive correlations if data are sufficiently variable. Given the amount of variance present in species-level abundance data, we were a little hesitant to use this approach. 
+
+# Organization
+
+1. Characterizing sites by soil resource balance, variance, and limitation. Observational data analysis with db-RDA.
+
+2. Estimation of species response coefficients, community-level correlation in nutrient responses.
+
+3. Exploration of covariates related to individual-level responses.

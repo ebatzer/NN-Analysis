@@ -1,0 +1,292 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+A suggested way to tease apart what makes certain species more likely to respond 
+positively to different nutrient enrichment treatments is through some variety 
+of decision tree.
+
+When we have a set of hierarchical predictors that range from site-level predictors
+(precip, temp, species richness) to more individual-level predictors (functional 
+type, relative rank abundance), decision trees can offer a reasonably intuitive 
+way to model and interpet interactions between them.
+
+# What features of a community best predict response?
+
+- Pretrt abundance
+    - Assign a zero if missing
+- Functional type
+- Exotic / native status
+- Any sort of other functional characteristics worth adding?
+
+# Check if previous code has any solutions
+
+```{r}
+library(tidyverse);library(data.table);library(dtplyr)
+
+specscores_full <- read.csv("../Data/specscores.csv")
+
+ taxonomy <- fread('C:/Users/ebatz/Dropbox/NutNet Data/Nutnet-site-taxonomy.csv',
+                stringsAsFactors = FALSE,
+                na.strings = c('NA','NULL'))
+
+cover <- fread('C:/Users/ebatz/Dropbox/NutNet Data/full-cover-22-February-2019.csv')
+
+taxonomy = cover %>% group_by(site_code, Taxon) %>%
+  summarise(ps_path = unique(ps_path),
+            local_lifespan = unique(local_lifespan),
+            functional_group = unique(functional_group),
+            N_fixer = unique(N_fixer))
+
+site.covars <- read.csv("../Data/site_covars.csv")
+
+site_pvals = read.csv("composition_pvalues.csv", header = TRUE, stringsAsFactors = FALSE)
+site_pvals = site_pvals %>% rename(site.K = trt_K_num, site.N = trt_N_num, site.P = trt_P_num)
+
+dot_full = read.csv("../data/dot_full.csv")
+
+scalar1 <- function(x) {x / sqrt(sum(x^2))}
+```
+
+# Joining tables into master
+
+```{r}
+spec_dot = read.csv("../data/dot_full.csv")
+head(spec_dot)
+```
+
+# Creating a "tuning table"
+
+To assess how individual species contribute to community-patterns, we created a
+"tuning table" that can be used to find covariates between species and their
+estimated treatment responses, as well as subset our data to species that are
+present in the first year of sampling, found in X number of plots over the course
+of sampling, etc.
+
+We generated this table using a set of potential variab
+
+* What are the ways
+
+
+
+
+
+
+
+
+
+
+```{r}
+pretrt_total = ttable %>% group_by(site_code, Taxon, block) %>%
+  summarise(pretrtcover = sum(pret_covN, pret_covControl, pret_covK, pret_covP)) %>%
+  group_by(site_code) %>%
+  summarise(pretrt_totalcover = sum(pretrtcover)) 
+```
+
+```{r}
+pretrt = ttable %>% group_by(site_code, Taxon, block) %>%
+  summarise(pretrtcover = sum(pret_covN, pret_covControl, pret_covK, pret_covP)) %>%
+  group_by(site_code, Taxon) %>%
+  summarise(pretrtcover = mean(pretrtcover)) %>%
+  group_by(site_code) %>%
+  mutate(relrank = rank(pretrtcover)/ max(rank(pretrtcover))) %>%
+  mutate(species = gsub("\\.", " ", Taxon)) %>%
+  select(-Taxon)
+    
+specscores = specscores_full %>%
+  select(-X) %>%
+  gather(key = "species",
+         value = "coef", 
+         -c(site, trt)) %>%
+  mutate(species = gsub("\\.", " ", species)) %>%
+  inner_join(pretrt, by = c(site = "site_code", species = "species"))
+
+taxonomy = taxonomy %>% mutate(species = gsub("\\.", " ", Taxon)) %>%
+  rename("site" = site_code)
+
+specscores = specscores %>% plyr::join(taxonomy, by = c("site", "species"), match = "first")
+
+specscores = specscores %>% inner_join(site_pvals %>% select(site, site.K, site.P, site.N))
+
+specscores = specscores %>% inner_join(dot_full %>% select(site, NP, NK, PK))
+
+resptable = specscores %>% inner_join(site.covars, by = c(site = "site_code"))
+
+head(resptable)
+```
+
+```{r}
+resptable %>% 
+  spread(key = trt, value = coef) %>%
+  filter(site.P < .05 & site.N < .05) %>%
+  filter(NP == min(NP)) %>%
+  ggplot(aes(x = trt_N, y = trt_P)) +
+  geom_point(aes(size = pretrtcover, color = functional_group)) +
+  stat_smooth(method = "lm", se = FALSE)
+  
+resptable %>% 
+  spread(key = trt, value = coef) %>%
+  filter(site.P < .05 & site.N < .05) %>%
+  filter(NP == max(NP)) %>%
+  ggplot(aes(x = trt_N, y = trt_P)) +
+  geom_point(aes(size = pretrtcover, color = functional_group)) +
+  stat_smooth(method = "lm", se = FALSE)
+
+resptable %>% 
+  spread(key = trt, value = coef) %>%
+  filter(site.P < .05 & site.N < .05) %>%
+  filter(NP == median(NP)) %>%
+  ggplot(aes(x = trt_N, y = trt_P)) +
+  geom_point(aes(size = pretrtcover, color = functional_group)) +
+  stat_smooth(method = "lm", se = FALSE)
+```
+
+```{r}
+resptable %>%  
+  spread(key = trt, value = coef) %>%
+  filter(site.P < .05 & site.N < .05) %>% 
+  ggplot(aes(x = trt_N, y = trt_P)) +
+  geom_point(aes(size = pretrtcover, color = functional_group)) +
+  facet_wrap(~functional_group) +
+  stat_smooth(method = "lm", se = FALSE)
+
+
+resptable %>%  
+  spread(key = trt, value = coef) %>%
+  filter(site.P < .05 & site.N < .05) %>% 
+  ggplot(aes(x = trt_N, y = trt_P)) +
+  geom_point(aes(size = pretrtcover, color = ps_path)) +
+  stat_smooth(method = "lm", se = FALSE)
+```
+
+```{r}
+resptable %>%  
+  spread(key = trt, value = coef) %>%
+  filter(site.P < .05 & site.N < .05) %>% 
+  filter(pretrtcover > .01) %>%
+  ggplot(aes(x = functional_group, 
+             y = trt_P,
+             fill = functional_group)) +
+  geom_boxplot()
+
+resptable %>%  
+  spread(key = trt, value = coef) %>%
+  filter(site.P < .05 & site.N < .05) %>% 
+  filter(pretrtcover > .01) %>%
+  ggplot(aes(x = functional_group, 
+             y = trt_N,
+             fill = functional_group)) +
+  geom_boxplot()
+
+resptable %>%  
+  spread(key = trt, value = coef) %>%
+  filter(site.P < .05 & site.N < .05) %>% 
+  filter(pretrtcover > .01) %>%
+  ggplot(aes(x = ps_path, 
+             y = trt_P,
+             fill = ps_path)) +
+  geom_boxplot()
+
+```
+
+```{r}
+formods = resptable %>%  
+  spread(key = trt, value = coef) %>%
+  filter(pretrtcover > .01) %>%
+  filter(site.P < .05 & site.N < .05)
+
+mod = summary(lm(trt_P ~ trt_N, data = formods))
+
+summary(lm(trt_P ~ trt_N + functional_group, data = formods))
+
+formods$resid = resid(mod)
+
+formods %>%
+  ggplot(aes(x = functional_group,
+             y = resid,
+             fill = functional_group)) +
+  geom_boxplot()
+```
+
+
+
+```{r}
+resptable %>% 
+  filter(trt == "trt_N") %>%
+  filter(functional_group %in% c("FORB", "GRAMINOID", "GRASS", "LEGUME", "WOODY")) %>%
+  filter(pretrtcover > .01) %>%
+  ggplot(aes(x = relrank, y = coef, color = functional_group)) + 
+  geom_point() +
+  stat_smooth(method = "lm")
+```
+
+
+```{r}
+df = resptable %>% filter(trt_N < .05) %>% filter(trt == "trt_N")
+df$functional_group <- as.factor(df$functional_group)
+df$ps_path <- as.factor(df$ps_path)
+df$local_provenance <- as.factor(df$local_provenance)
+df$local_lifespan <- as.factor(df$local_lifespan)
+df$local_lifeform <- as.factor(df$local_lifeform)
+df %>% ggplot(aes( x = log(pretrtcover),
+                   y = coef,
+                   color = functional_group)) + geom_point() + 
+  stat_smooth(method = "lm", fullrange = TRUE, se = FALSE)
+```
+```{r}
+df = resptable %>% filter(trt_P < .05) %>% filter(trt == "trt_P")
+df$functional_group <- as.factor(df$functional_group)
+df$ps_path <- as.factor(df$ps_path)
+df$local_provenance <- as.factor(df$local_provenance)
+df$local_lifespan <- as.factor(df$local_lifespan)
+df$local_lifeform <- as.factor(df$local_lifeform)
+df %>% ggplot(aes( x = log(pretrtcover),
+                   y = coef,
+                   color = functional_group)) + geom_point() + 
+  stat_smooth(method = "lm", fullrange = TRUE, se = FALSE)
+```
+
+```{r}
+df = resptable %>% filter(trt_K < .05) %>% filter(trt == "trt_K")
+df$functional_group <- as.factor(df$functional_group)
+df$ps_path <- as.factor(df$ps_path)
+df$local_provenance <- as.factor(df$local_provenance)
+df$local_lifespan <- as.factor(df$local_lifespan)
+df$local_lifeform <- as.factor(df$local_lifeform)
+df %>% ggplot(aes( x = log(pretrtcover),
+                   y = coef,
+                   color = functional_group)) + geom_point() + 
+  stat_smooth(method = "lm", fullrange = TRUE, se = FALSE)
+```
+
+# Fitting linear models to each piece of data?
+
+```{r}
+library(data.table)
+compmat = read.csv("../data/compmat_edited.csv")
+head(compmat)
+
+longcomp <- compmat %>% select(-c("X")) %>%
+  gather(key = "species",
+         value = "cover", 
+         -c("site_code", "year", "block", "plot", "trt", "year_trt", 
+            "trt_K", "trt_P", "trt_N", "trt_K_num", "trt_P_num", "trt_N_num"))
+data.table(longcomp)
+
+
+fit_lm <- function(tmp){
+  
+  if(sum(cover) == 0){
+    return()
+  }else{
+    fit = lmer(cover ~ trt_K_num + trt_P_num + trt_N_num + year_trt + (1|plot),
+               data = tmp)
+    
+  }
+  
+}
+
+tmp = longcomp[longcomp$site_code == "mcla.us",]
+longcomp
+```

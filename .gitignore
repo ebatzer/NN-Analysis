@@ -2,9 +2,5 @@
 .Rhistory
 .RData
 .Ruserdata
-
-Citations/
-
+*.pdf
 *.csv
-
-To Read/

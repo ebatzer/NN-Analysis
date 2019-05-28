@@ -1,0 +1,661 @@
+---
+title: "R Notebook"
+output:
+  rmarkdown::html_document:
+    theme: lumen
+---
+
+# How do sites vary in their nutrient resource profiles?
+
+As a starting point, I characterized sites by their resource availability to get a
+better sense of the variation in resource supply across sites, as well as
+correlation between the three potential limiting resources manipulated through
+fertilization.
+
+```{r, message = FALSE, echo = FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                      fig.width = 5, fig.height = 3.5)
+
+# Loading necessary packages
+library(ggplot2) # Figure plotting
+library(tidyverse) # Data manipulation
+library(vegetarian) # Exponentiated diversity indices (Hill Numbers)
+library(lme4) # Linear mixed effects models
+library(vegan) # General ecology functions
+library(data.table) # Fast reading of data tables
+library(testthat) # Unit testing
+library(plotly) # Interactive graphics
+```
+
+```{r, echo = FALSE, warning=FALSE}
+################################################################################
+### Data preprocessing
+################################################################################
+
+# Loading in dataset (Updated to Feb 21st 2019)
+cov.long <- fread('../data/full-cover-21-February-2019.csv',
+                  stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+
+plot.descriptions <- read.csv("../data/comb-by-plot-clim-soil-diversity-21-Feb-2019.csv",
+                              stringsAsFactors = FALSE)
+
+soil.chars <- read.csv("../data/soil-nutrients-21-February-2019.csv",
+                              stringsAsFactors = FALSE)
+
+biomass <- read.csv("../data/full-biomass-22-February-2019.csv")
+
+# Choose identifying variables
+ids <- c('site_code','year','year_trt', 'block','plot','trt')
+
+################################################################################
+### Selecting Sites
+################################################################################
+
+# Remove non-live percent cover esimates
+cov.long[,max_cover:=as.numeric(max_cover)] 
+cov.long <- cov.long[live==1]
+
+# Cast long into wide
+plot.sp.mat <- dcast(cov.long,site_code+year+block+plot+trt+year_trt ~ Taxon,value.var='max_cover', 
+                     fun.aggregate = sum,drop=T,fill=0)
+
+# Converting block, plot, year, and year_trt to numeric format
+plot.sp.mat$block <- as.numeric(plot.sp.mat$block)
+plot.sp.mat$plot <- as.numeric(plot.sp.mat$plot)
+plot.sp.mat$year <- as.numeric(plot.sp.mat$year)
+plot.sp.mat$year_trt <- as.numeric(plot.sp.mat$year_trt)
+
+# Creating list of sites to select for observational analysis, limited to:
+sites_toselect = plot.sp.mat %>% 
+  
+  # Contain data prior to treatment
+  filter(year_trt == 0) %>%
+  
+  # Sites contain 3 blocks and 3 sites
+  group_by(site_code) %>% 
+  summarise(num_block = length(unique(block)),
+            num_plots = length(unique(plot))) %>%
+  filter(num_block == 3 & num_plots == 30) %>%
+  
+  # Selecting the site code vector
+  select(site_code)
+
+# Filtering our plot.sp.mat to just those sites
+sites_toselect = c(sites_toselect$site_code)
+plot.sp.mat = plot.sp.mat %>% filter(site_code %in% sites_toselect)
+
+# Subset by soil characteristics (must include pre-treatment data)
+pretrt = soil.chars %>%   
+  filter(year_trt == 0) %>%
+  group_by(site_code, block) %>%
+  summarise(ndat = sum(!is.na(pct_N))) %>%
+  filter(ndat > 0)
+
+# Number of sites with pretrt soil data:
+cat("Number of sites selected \n")
+length(unique(pretrt$site_code))
+```
+
+```{r, warning=FALSE}
+# Subsetting species matrix by these site codes
+soil.chars = soil.chars[soil.chars$site_code %in% unique(pretrt$site_code), ] %>% filter(year_trt == 0)
+
+# Summarizing pretreatment soil nutrient profiles
+soil.means = soil.chars %>% 
+  group_by(site_code) %>% 
+  
+  # Selecting all quantitative soil resource measures
+  select(c("pct_C", "pct_N", "ppm_P", "ppm_K", "ppm_Ca", "ppm_Mg", "ppm_S", 
+           "ppm_Na", "ppm_Zn", "ppm_Mn", "ppm_Fe", "ppm_Cu", "ppm_B", "pH")) %>%
+  
+  # Coercing them to numeric format, calculate mean and sd for each site
+  mutate_all(as.numeric) %>%
+  summarise_all(.funs = list(mean = as.function(function(x){mean(na.omit(x))}),
+                             sd = as.function(function(x){sd(na.omit(x))})))
+
+# Function to calculate network-wide site z-scores
+calc_zscores <- function(x){(x - mean(na.omit(x))) / sd(na.omit(x))}
+
+# Selecting soil means and site PAR, PET to bind into a single resource dataframe
+sm = soil.means %>% 
+  select(site_code, pct_C_mean, pct_N_mean, ppm_P_mean, ppm_K_mean) 
+
+pr = plot.descriptions %>%
+  group_by(site_code) %>%
+  summarise_at(vars(Ambient_PAR, RAIN_PET),
+               as.function(function(x){mean(na.omit(x))}))
+
+# Absolute site resource availability
+res_avail_abs = left_join(sm, pr, by = "site_code") %>% 
+  na.omit(.)
+
+# Relative site resource availability
+res_avail_rel = left_join(sm, pr, by = "site_code") %>%
+  mutate_if(is.numeric, calc_zscores) %>% 
+  na.omit(.)
+
+# Plotting relative site resource availability
+p1 = res_avail_abs %>% ggplot(aes(x = pct_N_mean)) +
+  geom_histogram(color = "black", fill = "lightblue") +
+  xlim(0, 1)+
+  ggtitle("Mean Site Soil %N")
+
+p2 =  res_avail_abs %>% ggplot(aes(x = ppm_P_mean)) +
+  geom_histogram(color = "black", fill = "lightgreen") +
+  ggtitle("Mean Site Soil ppm P")
+
+p3 = res_avail_abs %>% ggplot(aes(x = ppm_K_mean)) +
+  geom_histogram(color = "black", fill = "pink") +
+  ggtitle("Mean Site Soil ppm K")
+
+gridExtra::grid.arrange(p1, p2, p3, nrow = 2)
+```
+
+# Calculating site stoichiometric ratios
+
+To characterize sites by their relative resource supply and imbalance, we can
+calculate both the total amount of resources available in a given site, as well
+as the relative imbalance of these ratios, per Cardinale et al. (2009).
+
+In this method, site resource concentrations of any $n$ nutrients are standardized
+to their $z$-scores, then projected onto a vector ($\vec{1}$) that represents
+a perfect balance of resource stoichiometry.
+
+In a two-resource example, see panel (a) in the figure below from Lewandoska et al. (2016)
+
+<center>
+![](../Figures/lewandoska.jpg){width=500px}
+</center>
+
+This schematic shows some site resource concentrations in resources 1 and 2, denoted by the vector $r$, projected upon a "perfectly balanced" vector denoted by $a$. The length of this projection, $a$, represents total resource supply in the system, while the orthogonal vector, $b$ represents resource imbalance.
+
+As an aside, I think there's an error in the caption of this figure, where $b$ is listed as  a function of cosh(), which should produce an angle, $\theta$. This measure of  $\theta$ is likely what is actually being used, as is the case in the original Cardinale et al 2009. I've listed the formula below:
+
+$$\theta = \cos^{-1}\frac{(\vec{x} \cdot \vec{y})}{\left\lVert\vec{x}
+\right\rVert \left\lVert\vec{y}\right\rVert} = \cos^{-1}\frac{a}{r}$$
+
+I haven't seen this done before in other publications, but I believe we can also use this information to figure out
+what is limiting relative to this ideal stoichiometric ratio. The vector $b$, which is the portion of our observed vector $r$ that is not accounted for by the projection onto $a$ can be termed the "rejection", defined simply by $b = r - a$
+
+```{r}
+# Stoichiometric ratio function (from Lewandosta et al. 2016)
+stoichrat <- function(x){
+  
+  xvec = as.numeric(x)
+
+  y = rep(1, length(xvec))
+  
+  a = sum(xvec * y) / sqrt(sum(y))
+  
+  r = sqrt(sum(xvec^2))
+  
+  # "A" vector
+  avec = sum(xvec * y) / sqrt(sum(y)) * (y / sqrt(sum(y)))
+  names(avec) = c("a_N", "a_P", "a_K")
+  
+  # "B" vector
+  bvec = c(xvec - avec)
+  names(bvec) = c("b_N", "b_P", "b_K")
+  
+  b = sqrt(sum(bvec^2))
+
+  if(a >= 0){
+    theta = acos(a/r) * (180 / pi)
+  }else if(a < 0){
+    theta = 180 - acos(a/r) * (180 / pi)
+  }else{
+    error("There's a problem!")
+  }
+  
+  output <- list(a, theta, r, b, avec, bvec)
+  names(output) = c("a", "theta", "r", "b", "avec", "bvec")
+  
+  return(output)
+}
+
+# Relevant resources
+resources = res_avail_rel %>% 
+  select(pct_N_mean, ppm_P_mean, ppm_K_mean)
+
+# Stoichiometry output
+stoichout = apply(resources, MARGIN = 1, FUN = stoichrat)
+
+stoichtable = bind_cols(res_avail_rel %>% 
+  select(site_code, pct_N_mean, ppm_P_mean, ppm_K_mean),
+  bind_rows(lapply(stoichout, `[`, c(1:4))))
+
+avecs = data.frame(matrix(unlist(lapply(stoichout, `[`, c(5))), ncol = 3, byrow = TRUE))
+names(avecs) = names(stoichout[[1]]$avec)
+bvecs = data.frame(matrix(unlist(lapply(stoichout, `[`, c(6))), ncol = 3, byrow = TRUE))
+names(bvecs) = names(stoichout[[1]]$bvec)
+
+# Creating general stoichiometry table
+stoichtable = stoichtable %>% bind_cols(avecs, bvecs)
+
+# Calculating proportional imbalance -- what nutrients are limiting, relative to total nutrient availability?
+# Standardize by observed nutrient concentrations ("r" vector)
+prop_inbalance = stoichtable %>% select(b_N, b_P, b_K) /
+  stoichtable$r
+
+prop_inbalance = bind_cols(res_avail_rel, prop_inbalance)
+
+write.csv(stoichtable, "../Data/stoichtable.csv")
+```
+
+### Are measures of N, P, and K correlated with one another?
+
+To begin, I've simply calculated correlations between across-site Z-scores of N, P, and K. Z-scores of soil resources within a site seem to be relatively uncorrelated for N-P, N-K pairs, though P availability and K availability seem relatively linked to one another. Pattern possible linked to sources of resource availability? Weathering vs. deposition? Relationship with cation exchange capacity?
+
+```{r, echo = FALSE}
+cat(paste("N-P Z-score Corr:",cor(res_avail_rel$pct_N_mean, res_avail_rel$ppm_P_mean),
+      "\nN-K Z-score Corr:", cor(res_avail_rel$pct_N_mean, res_avail_rel$ppm_K_mean),
+      "\nP-K Z-score Corr:", cor(res_avail_rel$ppm_P_mean, res_avail_rel$ppm_K_mean)))
+
+
+```
+
+## Characterizing sites by resource availability and imbalance
+
+Following this framework to characterize site resource abundance and imbalance,
+I've plotted the two key components of this relationship below.  
+
+As a refresher:  
+
+* $a$ = Total resource supply  
+* $\theta$ = Resource imbalance
+
+```{r, fig.align = "center"}
+p1 = stoichtable %>% ggplot(aes(x = a,
+                         y = theta)) + 
+  geom_point(aes(text=sprintf("Site: %s", site_code))) +
+  ggtitle("Resource Abundance and Imbalance") +
+  ylab("Resource Imbalance (Theta)") +
+  xlab("Resource Abundance (a)")
+
+ggplotly(p1)
+```
+
+What I see here is that sites tend to vary quite widely in their resource availability
+and the relative abundance of these resources. Some sites, such jena.de and 
+lead.us have very high resource supply rates and comparitively low imbalance,
+while others, such as sgs.us and hnvr.us, are highly skewed in their resource supply.
+
+## What causes this resource imbalance
+
+As an extension of this method to quantify resource availability and imbalance,
+we can provide some sense of what specific nutrients drive resource imbalance. Here,
+I've plotted the relative contribution of our 3 key nutrients (NPK) to resource
+imbalance, standardized relative to the observed resource vector.
+
+Again, there appears considerable variation in patterns of abundance and 
+deficiency in key nutrients across the different sites. I've embedded this figure
+interactively to allow for exploration.
+
+Points are jittered to avoid overlap. Different positions on the Y axis 
+correspond to different nutrients. Points towards the right end of the X axis
+depict high resource abundance for a given site, towards the left for 
+resource deficiency.
+
+```{r, fig.align="center"}
+p2 = prop_inbalance %>% ggplot() + 
+  geom_jitter(height = .1, aes(x = b_N, y= 1, text=sprintf("Site: %s", site_code)), color = "red")+ 
+  geom_jitter(height = .1, aes(x = b_P, y= 2, text=sprintf("Site: %s", site_code)), color = "blue")+ 
+  geom_jitter(height = .1, aes(x = b_K, y= 3, text=sprintf("Site: %s", site_code)), color = "forestgreen") +
+  geom_text(data = data.frame(y = c(1.5, 2.5, 3.5),
+                              text = c("Nitrogen imbalance",
+                                       "Phosphorous imbalance",
+                                       "Potassium imbalance")),
+            aes(y = y,
+                x = 0,
+                label = text),
+            size = 2) +
+    geom_text(data = data.frame(y = 2.25,
+                                x = c(0.75, -0.75),
+                              text = c("Abundant", "Deficient")),
+            aes(y = y,
+                x = x,
+                label = text),
+            angle = 90, 
+            size = 2) +
+  geom_vline(xintercept = 0) + 
+  ggtitle("Rejection Vector") +
+  xlab("Resource Imbalance") +
+  scale_y_continuous(breaks = seq(1, 3, 1), labels = c("N", "P", "K")) +
+  ylab("Nutrient Identity")
+
+ggplotly(p2)
+```
+
+# Does resource abundance predict community productivity?
+
+As a simple proof of concept, I've plotted the relationship below between community productivity before treatment vs. total nutrient supply. It appears that there is a positive correlation between total nutrient supply (length of the "a" vector) and and mean pre-treatment productivity, though it's not a perfect relationship and may be more of a saturating curve. 
+
+```{r}
+y0_bmass <- biomass %>% 
+  filter(live == 1) %>%
+  group_by(site_code, block, plot, trt, year_trt) %>%
+  summarise(live_mass = na.omit(sum(mass))) %>%
+  filter(year_trt == 0) %>%
+  group_by(site_code) %>%
+  summarise(mean_mass = mean(live_mass)) %>%
+  right_join(stoichtable, by = "site_code")
+
+p3 = y0_bmass %>% ggplot(aes(x = a,
+                        y = mean_mass, 
+                        color = theta,
+                        text = sprintf("Site: %s", site_code))) +
+  stat_smooth(aes(color = NULL, text = NULL), se = FALSE, method = "lm") +
+  geom_point() +
+  xlab("Total Resource Supply") +
+  ylab("Mean Pretreatment Productivity")
+
+ggplotly(p3)
+```
+
+# How well do soil resources partition observational community variance?
+
+```{r}
+plot.sp.mat <- dcast(cov.long,site_code+year+block+plot+trt+year_trt ~ Taxon,value.var='max_cover', 
+                     fun.aggregate = sum,drop=T,fill=0)
+
+plot.sp.mat$block <- as.numeric(plot.sp.mat$block)
+plot.sp.mat$plot <- as.numeric(plot.sp.mat$plot)
+plot.sp.mat$year <- as.numeric(plot.sp.mat$year)
+plot.sp.mat$year_trt <- as.numeric(plot.sp.mat$year_trt)
+
+sites_toselect = plot.sp.mat %>% 
+  filter(year_trt == 0) %>%
+  group_by(site_code) %>% 
+  summarise(num_block = length(unique(block)),
+            num_plots = length(unique(plot))) %>%
+  filter(num_block == 3 & num_plots == 30) %>%
+  select(site_code)
+
+sites_toselect = c(sites_toselect$site_code)
+
+```
+
+```{r, include = FALSE}
+plot.sp.mat = plot.sp.mat %>% filter(site_code %in% sites_toselect)
+
+# Subset by soil characteristics (must include pre-treatment data)
+pretrt = soil.chars %>%   
+  filter(year_trt == 0) %>%
+  group_by(site_code, block) %>%
+  summarise(ndat = sum(!is.na(pct_N))) %>%
+  filter(ndat > 0)
+
+# Number of sites with pretrt soil data:
+length(unique(pretrt$site_code))
+```
+
+
+```{r}
+# Subsetting species matrix by these site codes
+soil.chars = soil.chars[soil.chars$site_code %in% unique(pretrt$site_code), ] %>% filter(year_trt == 0)
+plot.sp.mat = plot.sp.mat[plot.sp.mat$site_code %in% unique(pretrt$site_code), ]
+plot.sp.mat = plot.sp.mat %>% filter(year_trt == 0)
+
+soil.means = soil.chars %>% group_by(site_code) %>% 
+  select(c("pct_C", "pct_N", "ppm_P", "ppm_K", "ppm_Ca", "ppm_Mg", "ppm_S", 
+           "ppm_Na", "ppm_Zn", "ppm_Mn", "ppm_Fe", "ppm_Cu", "ppm_B", "pH")) %>%
+  mutate_all(as.numeric) %>%
+  summarise_all(.funs = list(mean = as.function(function(x){mean(na.omit(x))}),
+                             sd = as.function(function(x){sd(na.omit(x))})))
+```
+
+```{r}
+calc_zscores <- function(x){(x - mean(na.omit(x))) / sd(na.omit(x))}
+
+sm = soil.means %>% 
+  select(site_code, pct_C_mean, pct_N_mean, ppm_P_mean, ppm_K_mean) 
+
+pr = plot.descriptions %>%
+  group_by(site_code) %>%
+  summarise_at(vars(Ambient_PAR, RAIN_PET),
+               as.function(function(x){mean(na.omit(x))}))
+
+# Absolute site resource availability
+res_avail_abs = left_join(sm, pr, by = "site_code")
+
+# Relative site resource availability
+res_avail_rel = left_join(sm, pr, by = "site_code") %>%
+  mutate_if(is.numeric, calc_zscores)
+```
+
+```{r}
+# Subsetting species matrix by these site codes
+soil.chars = soil.chars[soil.chars$site_code %in% unique(pretrt$site_code), ] %>% filter(year_trt == 0)
+plot.sp.mat = plot.sp.mat[plot.sp.mat$site_code %in% unique(pretrt$site_code), ]
+plot.sp.mat = plot.sp.mat %>% filter(year_trt == 0)
+
+soil.zscores = soil.chars %>% group_by(site_code, block, plot, Treatment, year, year_trt) %>% 
+  select(c("plot", "pct_C", "pct_N", "ppm_P", "ppm_K", "ppm_Ca", "ppm_Mg", "ppm_S", 
+           "ppm_Na", "ppm_Zn", "ppm_Mn", "ppm_Fe", "ppm_Cu", "ppm_B", "pH")) %>%
+  left_join(soil.means, by = c("site_code")) %>%
+  mutate_all(as.numeric) %>%
+  mutate(C_z = (pct_C - pct_C_mean) / pct_C_sd,
+         N_z = (pct_N - pct_N_mean) / pct_N_sd,
+         P_z = (ppm_P - ppm_P_mean) / ppm_P_sd,
+         K_z = (ppm_K - ppm_K_mean) / ppm_K_sd,
+         Ca_z = (ppm_Ca - ppm_Ca_mean) / ppm_Ca_sd,
+         Mg_z = (ppm_Mg - ppm_Mg_mean) / ppm_Mg_sd,
+         S_z = (ppm_S - ppm_S_mean) / ppm_S_sd,
+         Na_z = (ppm_Na - ppm_Na_mean) / ppm_Na_sd,
+         Zn_z = (ppm_Zn - ppm_Zn_mean) / ppm_Zn_sd,
+         Mn_z = (ppm_Mn - ppm_Mn_mean) / ppm_Mn_sd,
+         Fe_z = (ppm_Fe - ppm_Fe_mean) / ppm_Fe_sd,
+         Cu_z = (ppm_Cu - ppm_Cu_mean) / ppm_Cu_sd,
+         B_z = (ppm_B - ppm_B_mean) / ppm_B_sd,
+         pH_z = (pH - pH_mean) / pH_sd
+         )
+
+alldat = inner_join(na.omit(soil.zscores) %>% rename("trt" = "Treatment"), plot.sp.mat, by = c("site_code", "block", "plot", "year", "trt", "year_trt"))
+alldat = bind_cols(alldat[,1:61], alldat[,62:ncol(alldat)][,colSums(alldat[,62:ncol(alldat)]) > 0])
+
+# Subsetting data into two matrices
+com.attr = alldat[,1:61]
+com.mat = alldat[,62:ncol(alldat)]
+
+# Checking dataframes
+# head(com.mat)
+# head(com.attr)
+```
+
+```{r, include = FALSE}
+# For each site in the dataset:
+  # Segment into blocks (if/if not)
+  # Calculate site scores within each block
+  # Indirect gradient analysis of N, P, and K on 
+  # Pull out individual site scores within each block for each of the three nutrients (N, P, and K) 
+  # Also pull out total variation explained by each axis (constrained vs not) + significance
+  # Correlations between axes?
+
+# What are the best ways to look at multi-block variation? 
+
+# Alternatively, could do the same using CCA
+output <- list()
+counter <- 1
+
+# For all unique sites selected
+for(i in unique(com.attr$site_code)){
+  
+    # Subset to a single site
+    com.subset <- com.mat[com.attr$site_code == i & com.attr$year_trt == 0,]
+    
+    # Remove all zero columns
+    com.subset = com.subset[,colSums(com.subset) > 0]
+  
+    # Pull out relevant plot attributes for each site
+    attr.subset <- data.frame(com.attr) %>% filter(site_code == i & year_trt == 0)
+    
+    # Check that these two matrices are the same size
+    expect_true(nrow(attr.subset) == nrow(com.subset))
+
+        
+    # Standardizing community data matrix (normalized, in this case)
+    mat.stdized <- decostand(com.subset, "total")
+        
+    # Running CCA on this data with the 3 axes of environmental variation (N, P, K)
+    dbRDA.mod = capscale(mat.stdized ~ (N_z + P_z + K_z), distance = "bray", data = attr.subset)
+      
+    # Saving ouput
+    output[[counter]] = list(sitename = i,
+                               block = 1,
+                               envscores = calibrate(dbRDA.mod),
+                               varexp = data.frame(mod = anova(dbRDA.mod)$SumOfSqs[1],
+                                                   resid = anova(dbRDA.mod)$SumOfSqs[2],
+                                                   dfmod = anova(dbRDA.mod)$Df[1],
+                                                   dfresid = anova(dbRDA.mod)$Df[2],
+                                                   pval = anova(dbRDA.mod)$"Pr(>F)"[1]
+                                                  ),
+                               envvifs = vif.cca(dbRDA.mod))
+      
+      # Update counter
+      counter = counter + 1
+    
+}
+
+```
+
+### What sites exhibit the greatest proportion of community variance explained by soil nutrient Z-scores?
+
+Here I've run a db-RDA (may have some favorable properties relative to RDA, but functions similarly using different sorts of distance measures, rather than just euclidean) on each site, which should allow us to determine:
+
+* What fraction of the overall variance in observational community composition we can attribute to variation in soil N, P, and K (and to test this fraction with ANOVA)
+* What is the estimated relationship between community composition and soil characteristics (plot scores on N, P, and K axes)
+
+Because I've subset our data to just those plots containing 30 plots in three blocks, these comparisons should be done with very similar datasets - similar to Jon Bakker's approach for the temporal turnover manuscript.
+
+Here we see that a number of sites have significant fractions of community variance that can be explained by soil variables in db-RDA, and there's quite a range therein.
+
+```{r, echo = FALSE}
+
+# Binds coefficients from each site together:
+
+for(sites in 1:length(output)){
+  if(sites == 1){
+    
+    # Nutrient Loading Coefficients:
+    coefs = data.frame(output[[sites]]$envscores)
+    coefs$site = rep(output[[sites]]$sitename, nrow(coefs))
+    coefs$block = rep(output[[sites]]$block, nrow(coefs))
+    
+    # P - values:
+    pvals = data.frame(output[[sites]]$varexp)
+    pvals$site = rep(output[[sites]]$sitename, nrow(pvals))
+    pvals$block = rep(output[[sites]]$block, nrow(pvals))
+    
+  }else{
+    
+    # Nutrient Loading Coefficients
+    tojoin = data.frame(output[[sites]]$envscores)
+    tojoin$site = rep(output[[sites]]$sitename, nrow(tojoin))
+    tojoin$block = rep(output[[sites]]$block, nrow(tojoin))
+    coefs = bind_rows(coefs, tojoin)
+    
+    # P - values:
+    tojoin = data.frame(output[[sites]]$varexp)
+    tojoin$site = rep(output[[sites]]$sitename, nrow(tojoin))
+    tojoin$block = rep(output[[sites]]$block, nrow(tojoin))
+    pvals = bind_rows(pvals, tojoin)
+  }
+}
+
+pvals = pvals[pvals$dfresid == 26,]
+pvals$varfrac = pvals$mod / (pvals$mod + pvals$resid)
+
+pvals %>% arrange(varfrac) %>% ggplot(aes(x = site,
+                     y = mod / (mod + resid),
+                     color = pval <= .05)) +
+  geom_point() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+### What sites show the greatest amount of variance attributable to soil resource variation?
+
+Relating this variance fraction to CV's of N, P, and K shows an interesting, although not unexpected, pattern where the amoung of variance explained by soil nutrient Z-scores was correlated with the CV of nitrogen.
+
+```{r, echo = FALSE}
+p1 = left_join(pvals, soil.means, by = c("site" = "site_code")) %>%
+  mutate(CV_n =  pct_N_sd / pct_N_mean,
+         CV_p =  ppm_P_sd / ppm_P_mean,
+         CV_k =  ppm_K_sd / ppm_K_mean) %>%
+  ggplot(aes(x = CV_n,
+             y = varfrac)) +
+  geom_point(aes(color = site)) +
+  guides(color = FALSE)+
+  stat_smooth(method = "lm") +
+  xlab("Coefficient of Variation - N") +
+  ylab("Prop. Obs. Variance")
+
+p2 = left_join(pvals, soil.means, by = c("site" = "site_code")) %>%
+  mutate(CV_n =  pct_N_sd / pct_N_mean,
+         CV_p =  ppm_P_sd / ppm_P_mean,
+         CV_k =  ppm_K_sd / ppm_K_mean) %>%
+  ggplot(aes(x = CV_p,
+             y = varfrac)) +
+  geom_point(aes(color = site)) +
+  guides(color = FALSE)+
+  stat_smooth(method = "lm") +
+  xlab("Coefficient of Variation - P") +
+  ylab("Prop. Obs. Variance")
+
+p3 = left_join(pvals, soil.means, by = c("site" = "site_code")) %>%
+  mutate(CV_n =  pct_N_sd / pct_N_mean,
+         CV_p =  ppm_P_sd / ppm_P_mean,
+         CV_k =  ppm_K_sd / ppm_K_mean) %>%
+  ggplot(aes(x = CV_k,
+             y = varfrac)) +
+  geom_point(aes(color = site)) +
+  guides(color = FALSE) +
+  stat_smooth(method = "lm") +
+  xlab("Coefficient of Variation - K") +
+  ylab("Prop. Obs. Variance")
+
+gridExtra::grid.arrange(p1, p2, p3, nrow = 2)
+
+dat = left_join(pvals, soil.means, by = c("site" = "site_code")) %>%
+  mutate(CV_n =  pct_N_sd / pct_N_mean,
+         CV_p =  ppm_P_sd / ppm_P_mean,
+         CV_k =  ppm_K_sd / ppm_K_mean)
+
+car::Anova(lm(varfrac ~ CV_n * CV_p * CV_k, data = dat), type=2)
+
+```
+
+### Correlations between environmental scores
+
+If we look at community scores, we also see some evidence for corrrelation among
+responses to N, P, and K availability. 
+
+```{r}
+envfit_cor = coefs %>% group_by(site) %>% 
+  summarise(np = cor(N_z, P_z),
+            nk = cor(N_z, K_z),
+            pk = cor(K_z, P_z))
+
+p1 = envfit_cor %>% ggplot(aes(x = np)) +
+  geom_histogram(color = "black", fill = "lightblue") +
+  geom_vline(aes(xintercept = mean(np))) +
+  xlim(-1, 1)+
+  ggtitle("N-P Effect Correlation")
+
+p2 = envfit_cor %>% ggplot(aes(x = nk)) +
+  geom_histogram(color = "black", fill = "lightgreen") +
+  geom_vline(aes(xintercept = mean(nk))) +
+  xlim(-1, 1)+
+  ggtitle("N-K Effect Correlation")
+
+p3 = envfit_cor %>% ggplot(aes(x = pk)) +
+  geom_histogram(color = "black", fill = "pink") +
+  geom_vline(aes(xintercept = mean(pk))) +
+  xlim(-1, 1) +
+  ggtitle("P-K Effect Correlation")
+
+gridExtra::grid.arrange(p1, p2, p3, nrow = 2)
+```
+
+

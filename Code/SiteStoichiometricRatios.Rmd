@@ -1,0 +1,179 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+---
+title: "Part 1"
+output:
+  rmarkdown::html_document:
+    theme: lumen
+---
+
+# How do sites vary in their nutrient resource profiles?
+
+As a starting point, I characterized sites by their resource availability to get a
+better sense of the variation in resource supply across sites, as well as
+correlation between the three potential limiting resources manipulated through
+fertilization.
+
+```{r, message = FALSE, echo = FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                      fig.width = 5, fig.height = 3.5)
+
+# Loading necessary packages
+library(ggplot2) # Figure plotting
+library(tidyverse) # Data manipulation
+library(vegetarian) # Exponentiated diversity indices (Hill Numbers)
+library(lme4) # Linear mixed effects models
+library(vegan) # General ecology functions
+library(data.table) # Fast reading of data tables
+library(testthat) # Unit testing
+library(plotly) # Interactive graphics
+```
+
+```{r, echo = FALSE, warning=FALSE}
+################################################################################
+### Data preprocessing
+################################################################################
+
+# Loading in dataset (Updated to Feb 21st 2019)
+cov.long <- fread('../data/full-cover-21-February-2019.csv',
+                  stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+
+plot.descriptions <- fread("../data/comb-by-plot-clim-soil-diversity-21-Feb-2019.csv",
+                           stringsAsFactors = FALSE,
+                           na.strings = c('NA','NULL'))
+
+soil.chars <- read.csv("../data/soil-nutrients-21-February-2019.csv",
+                       stringsAsFactors = FALSE,
+                       na.strings = c('NA','NULL'))
+
+biomass <- read.csv("../data/full-biomass-22-February-2019.csv")
+
+# Choose identifying variables
+ids <- c('site_code','year','year_trt', 'block','plot','trt')
+```
+
+```{r, warning=FALSE}
+# Subsetting species matrix by these site codes
+soil.chars = soil.chars %>% 
+  filter(year_trt == 0) %>%
+  mutate(block = as.factor(block),
+         plot = as.factor(plot))
+
+# Selecting parameters of interest
+soil.stdized = soil.chars %>% 
+  select(site_code, block, plot, pct_N, pct_C, ppm_P, ppm_K) %>%
+  na.omit() %>%
+  mutate_if(is.numeric, log) 
+
+# Function to calculate network-wide site z-scores
+calc_zscores <- function(x){(x - mean(na.omit(x))) / sd(na.omit(x))}
+
+# Z-scoring variation
+soil.zscores = soil.stdized %>% 
+  mutate_if(is.numeric, calc_zscores)
+
+pairs(soil.zscores %>% 
+  select(pct_N, ppm_P, ppm_K))
+
+solve(cor(soil.zscores %>% 
+  select(pct_N, ppm_P, ppm_K)))
+
+```
+
+```{r}
+# Plotting relative site resource availability
+p1 = res_avail_abs %>% ggplot(aes(x = pct_N_mean)) +
+  geom_histogram(color = "black", fill = "lightblue") +
+  xlim(0, 1)+
+  ggtitle("Mean Site Soil %N")
+
+p2 =  res_avail_abs %>% ggplot(aes(x = ppm_P_mean)) +
+  geom_histogram(color = "black", fill = "lightgreen") +
+  ggtitle("Mean Site Soil ppm P")
+
+p3 = res_avail_abs %>% ggplot(aes(x = ppm_K_mean)) +
+  geom_histogram(color = "black", fill = "pink") +
+  ggtitle("Mean Site Soil ppm K")
+
+gridExtra::grid.arrange(p1, p2, p3, nrow = 2)
+```
+
+# Calculating site stoichiometric ratios
+
+To characterize sites by their relative resource supply and imbalance, we can
+calculate both the total amount of resources available in a given site, as well
+as the relative imbalance of these ratios, per Cardinale et al. (2009).
+
+In this method, site resource concentrations of any $n$ nutrients are standardized
+to their $z$-scores, then projected onto a vector ($\vec{1}$) that represents
+a perfect balance of resource stoichiometry.
+
+In a two-resource example, see panel (a) in the figure below from Lewandoska et al. (2016)
+
+<center>
+![](../Figures/lewandoska.jpg){width=500px}
+</center>
+
+This schematic shows some site resource concentrations in resources 1 and 2, denoted by the vector $r$, projected upon a "perfectly balanced" vector denoted by $a$. The length of this projection, $a$, represents total resource supply in the system, while the orthogonal vector, $b$ represents resource imbalance.
+
+As an aside, I think there's an error in the caption of this figure, where $b$ is listed as  a function of cosh(), which should produce an angle, $\theta$. This measure of  $\theta$ is likely what is actually being used, as is the case in the original Cardinale et al 2009. I've listed the formula below:
+
+$$\theta = \cos^{-1}\frac{(\vec{x} \cdot \vec{y})}{\left\lVert\vec{x}
+\right\rVert \left\lVert\vec{y}\right\rVert} = \cos^{-1}\frac{a}{r}$$
+
+I haven't seen this done before in other publications, but I believe we can also use this information to figure out
+what is limiting relative to this ideal stoichiometric ratio. The vector $b$, which is the portion of our observed vector $r$ that is not accounted for by the projection onto $a$ can be termed the "rejection", defined simply by $b = r - a$
+
+```{r}
+# Stoichiometric ratio function (from Lewandosta et al. 2016)
+stoichrat <- function(x){
+  
+  xvec = as.numeric(x)
+
+  y = rep(1, length(xvec))
+  
+  a = sum(xvec * y) / sqrt(sum(y))
+  
+  r = sqrt(sum(xvec^2))
+  
+  # "A" vector
+  avec = sum(xvec * y) / sqrt(sum(y)) * (y / sqrt(sum(y)))
+  names(avec) = c("a_N", "a_P", "a_K")
+  
+  # "B" vector
+  bvec = c(xvec - avec)
+  names(bvec) = c("b_N", "b_P", "b_K")
+  
+  b = sqrt(sum(bvec^2))
+
+  if(a >= 0){
+    theta = acos(a/r) * (180 / pi)
+  }else if(a < 0){
+    theta = 180 - acos(a/r) * (180 / pi)
+  }else{
+    error("There's a problem!")
+  }
+  
+  output <- list(a, theta, r, b, avec, bvec)
+  names(output) = c("a", "theta", "r", "b", "avec", "bvec")
+  
+  return(output)
+}
+
+# Relevant resources
+resources = res_avail_rel %>% 
+  select(pct_N_mean, ppm_P_mean, ppm_K_mean)
+
+# Stoichiometry output
+stoichout = apply(resources, MARGIN = 1, FUN = stoichrat)
+
+stoichtable = bind_cols(res_avail_rel %>% 
+  select(site_code, pct_N_mean, ppm_P_mean, ppm_K_mean),
+  bind_rows(lapply(stoichout, `[`, c(1:4))))
+
+avecs = data.frame(matrix(unlist(lapply(stoichout, `[`, c(5))), ncol = 3, byrow = TRUE))
+names(avecs) = names(stoichout[[1]]$avec)
+bvecs = data.frame(matrix(unlist(lapply(stoichout, `[`, c(6))), ncol = 3, byrow = TRUE))

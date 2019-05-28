@@ -1,0 +1,58 @@
+---
+title: "Diversity-Turnover Analyses"
+author: "Evan Batzer"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Part 2: Environmental Covariates
+
+
+```{r, message = FALSE, echo = FALSE}
+# Loading necessary packages
+library(ggplot2) # Figure plotting
+library(tidyverse) # Data manipulation
+library(lme4) # Linear mixed effects models
+library(vegan) # General ecology functions
+library(data.table) # Fast reading of data tables
+library(testthat) # Unit testing
+library(dtplyr) # Data.table dplyr functions
+library(JostDiv) # Exponentiated diversity indices (Hill Numbers)
+library(gridExtra)
+```
+    
+### Reading in Datasets
+
+```{r}
+# Biomass data
+biomass_data <- fread("../Data/comb-by-plot-22-February-2019.csv",
+                  stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+
+# Loading in dataset (Updated to Feb 22st 2019)
+cover <- fread('../Data/full-cover-22-February-2019.csv',
+                  stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+
+# Plot descriptions
+plot.descriptions <-  read.csv("../Data/comb-by-plot-clim-soil-diversity-22-Feb-2019.csv",
+                              stringsAsFactors = FALSE)
+
+# Soil characteristics
+soil.chars <- read.csv("../Data/soil-nutrients-21-February-2019.csv",
+                              stringsAsFactors = FALSE)
+
+# Annual weather data
+weather <- read.csv(file = "../Data/Weather_annual_20190510.csv")
+```
+
+# How to define soil resource supply?
+
+* Resource ratio hypothesis?
+
+* Variation in resource ratio?
+
+
+
+# How to define climatic variation?

@@ -1,0 +1,175 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# How do sites vary in their nutrient resource profiles?
+
+```{r}
+# Loading necessary packages
+library(ggplot2) # Figure plotting
+library(tidyverse) # Data manipulation
+library(vegetarian) # Exponentiated diversity indices (Hill Numbers)
+library(lme4) # Linear mixed effects models
+library(vegan)
+library(data.table)
+library(testthat)
+```
+
+```{r, echo = FALSE, warning=FALSE}
+################################################################################
+### Data preprocessing
+################################################################################
+
+# Loading in dataset (Updated to Feb 21st 2019)
+cov.long <- fread('C:/Users/ebatz/Dropbox/NutNet Data/full-cover-21-February-2019.csv',
+                  stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+
+plot.descriptions <- read.csv("C:/Users/ebatz/Dropbox/NutNet Data/comb-by-plot-21-February-2019.csv",
+                              stringsAsFactors = FALSE)
+
+soil.chars <- read.csv("C:/Users/ebatz/Dropbox/NutNet Data/soil-nutrients-21-February-2019.csv",
+                              stringsAsFactors = FALSE)
+
+# Choose identifying variables
+ids <- c('site_code','year','year_trt', 'block','plot','trt')
+
+# Remove non-live percent cover esimates
+cov.long[,max_cover:=as.numeric(max_cover)] 
+cov.long <- cov.long[live==1]
+
+# Cast long into wide
+plot.sp.mat <- dcast(cov.long,site_code+year+block+plot+trt+year_trt ~ Taxon,value.var='max_cover', 
+                     fun.aggregate = sum,drop=T,fill=0)
+
+# Converting block, plot, year, and year_trt to numeric format
+plot.sp.mat$block <- as.numeric(plot.sp.mat$block)
+plot.sp.mat$plot <- as.numeric(plot.sp.mat$plot)
+plot.sp.mat$year <- as.numeric(plot.sp.mat$year)
+plot.sp.mat$year_trt <- as.numeric(plot.sp.mat$year_trt)
+
+# Creating list of sites to select for observational analysis, limited to:
+sites_toselect = plot.sp.mat %>% 
+  
+  # Contain data prior to treatment
+  filter(year_trt == 0) %>%
+  
+  # Sites contain 3 blocks and 3 sites
+  group_by(site_code) %>% 
+  summarise(num_block = length(unique(block)),
+            num_plots = length(unique(plot))) %>%
+  filter(num_block == 3 & num_plots == 30) %>%
+  
+  # Selecting the site code vector
+  select(site_code)
+
+# Filtering our plot.sp.mat to just those sites
+sites_toselect = c(sites_toselect$site_code)
+plot.sp.mat = plot.sp.mat %>% filter(site_code %in% sites_toselect)
+
+# Subset by soil characteristics (must include pre-treatment data)
+pretrt = soil.chars %>%   
+  filter(year_trt == 0) %>%
+  group_by(site_code, block) %>%
+  summarise(ndat = sum(!is.na(pct_N))) %>%
+  filter(ndat > 0)
+
+# Number of sites with pretrt soil data:
+cat("Number of sites selected")
+length(unique(pretrt$site_code))
+```
+
+```{r}
+# Subsetting species matrix by these site codes
+soil.chars = soil.chars[soil.chars$site_code %in% unique(pretrt$site_code), ] %>% filter(year_trt == 0)
+
+# Summarizing pretreatment soil nutrient profiles
+soil.means = soil.chars %>% 
+  group_by(site_code) %>% 
+  
+  # Selecting all quantitative soil resource measures
+  select(c("pct_C", "pct_N", "ppm_P", "ppm_K", "ppm_Ca", "ppm_Mg", "ppm_S", 
+           "ppm_Na", "ppm_Zn", "ppm_Mn", "ppm_Fe", "ppm_Cu", "ppm_B", "pH")) %>%
+  
+  # Coercing them to numeric format, calculate mean and sd for each site
+  mutate_all(as.numeric) %>%
+  summarise_all(.funs = list(mean = as.function(function(x){mean(na.omit(x))}),
+                             sd = as.function(function(x){sd(na.omit(x))})))
+
+# Function to calculate network-wide site z-scores
+calc_zscores <- function(x){(x - mean(na.omit(x))) / sd(na.omit(x))}
+
+# Selecting soil means and site PAR, PET to bind into a single resource dataframe
+sm = soil.means %>% 
+  select(site_code, pct_C_mean, pct_N_mean, ppm_P_mean, ppm_K_mean) 
+
+pr = plot.descriptions %>%
+  group_by(site_code) %>%
+  summarise_at(vars(Ambient_PAR, RAIN_PET),
+               as.function(function(x){mean(na.omit(x))}))
+
+# Absolute site resource availability
+res_avail_abs = left_join(sm, pr, by = "site_code")
+
+# Relative site resource availability
+res_avail_rel = left_join(sm, pr, by = "site_code") %>%
+  mutate_if(is.numeric, calc_zscores)
+```
+
+
+
+# Calculating site stoichiometric ratios
+
+To characterize sites by their relative resource supply and imbalance, we can
+calculate the relative ratio 
+
+![optional caption text](figures/img.png)
+
+$$\theta = \cos^{-1}\frac{(\vec{x} \cdot \vec{y})}{\left\lVert\vec{x}
+\right\rVert \left\lVert\vec{y}\right\rVert}$$
+
+
+```{r}
+# Stoichiometric ratio function (from Lewandosta et al. 2016)
+stoichrat <- function(x){
+
+  y = rep(1, length(x))
+  
+  a = sum(x * y) / sqrt(sum(y))
+  
+  r = sqrt(sum(x^2))
+  
+  b = a / r
+  
+  if(a >= 0){
+    theta = acos(b) * (180 / pi)
+  }else if(a < 0){
+    theta = 180 - acos(b) * (180 / pi)
+  }else{
+    error("There's a problem!")
+  }
+  
+  output <- c(a, theta, r, b)
+  names(output) = c("a", "theta", "r", "b")
+  
+  return(output)
+}
+
+# Relevant resources
+resources = res_avail_rel %>% 
+  select(pct_N_mean, ppm_P_mean, ppm_K_mean)
+
+# Stoichiometry output
+stoichout = bind_cols(na.omit(res_avail_rel[,c(1,3:5)]), 
+          data.frame(t(apply(FUN = stoichrat, na.omit(resources), MARGIN = 1))))
+
+# write.csv("../data/site_stoichiometry.csv")
+
+stoichout %>% ggplot(aes(x = a,
+                         y = theta)) + geom_point()
+
+stoichout %>% ggplot(aes(x = a,
+                         y = abs(b))) + geom_point()
+
+```

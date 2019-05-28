@@ -1,0 +1,112 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+A suggested way to tease apart what makes certain species more likely to respond 
+positively to different nutrient enrichment treatments is through some variety 
+of decision tree.
+
+When we have a set of hierarchical predictors that range from site-level predictors
+(precip, temp, species richness) to more individual-level predictors (functional 
+type, relative rank abundance), decision trees can offer a reasonably intuitive 
+way to model and interpet interactions between them.
+
+# What features of a community best predict response?
+
+- Pretrt abundance
+    - Assign a zero if missing
+- Functional type
+- Exotic / native status
+- Any sort of other functional characteristics worth adding?
+
+```{r}
+fread("../data/compmat_edited.csv")
+```
+
+
+# Check if previous code has any solutions
+
+```{r}
+library(tidyverse);library(data.table);library(dtplyr)
+
+ttable <- fread("../Data/tuningtable_normalized.csv")
+
+specscores_full <- read.csv("../Data/specscores.csv")
+
+taxonomy <- fread('C:/Users/ebatz/Dropbox/NutNet Data/Nutnet-site-taxonomy.csv',
+               stringsAsFactors = FALSE,
+               na.strings = c('NA','NULL'))
+
+site.covars <- read.csv("../Data/site_covars.csv")
+
+site_pvals = read.csv("composition_pvalues.csv", header = TRUE, stringsAsFactors = FALSE)
+head(site_pvals)
+```
+
+# Joining tables into master
+```{r}
+pretrt = ttable %>% group_by(site_code, Taxon, block) %>%
+  summarise(pretrtcover = mean(pret_covN, pret_covControl, pret_covK, pret_covP)) %>%
+  group_by(site_code, Taxon) %>%
+  summarise(pretrtcover = mean(pretrtcover)) %>%
+  mutate(species = gsub("\\.", " ", Taxon)) %>%
+  select(-Taxon)
+
+specscores = specscores_full %>%
+  select(-X) %>%
+  gather(key = "species",
+         value = "coef", 
+         -c(site, trt)) %>%
+  mutate(species = gsub("\\.", " ", species)) %>%
+  left_join(pretrt, by = c(site = "site_code", species = "species"))
+
+taxonomy = taxonomy %>% mutate(species = gsub("\\.", " ", Taxon))
+
+specscores = specscores %>% inner_join(taxonomy, by = c(site = "site_code", species = "species"))
+
+specscores = specscores %>% left_join(site_pvals %>% select(site, trt_K, trt_P, trt_N))
+
+resptable = specscores %>% left_join(site.covars, by = c(site = "site_code"))
+
+head(resptable)
+```
+
+
+```{r}
+df = resptable %>% filter(trt_N < .05) %>% filter(trt == "trt_N")
+df$functional_group <- as.factor(df$functional_group)
+df$ps_path <- as.factor(df$ps_path)
+df$local_provenance <- as.factor(df$local_provenance)
+df$local_lifespan <- as.factor(df$local_lifespan)
+df$local_lifeform <- as.factor(df$local_lifeform)
+df %>% ggplot(aes( x = log(pretrtcover),
+                   y = coef,
+                   color = functional_group)) + geom_point() + 
+  stat_smooth(method = "lm", fullrange = TRUE, se = FALSE)
+```
+```{r}
+df = resptable %>% filter(trt_P < .05) %>% filter(trt == "trt_P")
+df$functional_group <- as.factor(df$functional_group)
+df$ps_path <- as.factor(df$ps_path)
+df$local_provenance <- as.factor(df$local_provenance)
+df$local_lifespan <- as.factor(df$local_lifespan)
+df$local_lifeform <- as.factor(df$local_lifeform)
+df %>% ggplot(aes( x = log(pretrtcover),
+                   y = coef,
+                   color = functional_group)) + geom_point() + 
+  stat_smooth(method = "lm", fullrange = TRUE, se = FALSE)
+```
+
+```{r}
+df = resptable %>% filter(trt_K < .05) %>% filter(trt == "trt_K")
+df$functional_group <- as.factor(df$functional_group)
+df$ps_path <- as.factor(df$ps_path)
+df$local_provenance <- as.factor(df$local_provenance)
+df$local_lifespan <- as.factor(df$local_lifespan)
+df$local_lifeform <- as.factor(df$local_lifeform)
+df %>% ggplot(aes( x = log(pretrtcover),
+                   y = coef,
+                   color = functional_group)) + geom_point() + 
+  stat_smooth(method = "lm", fullrange = TRUE, se = FALSE)
+```

@@ -1,0 +1,37 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+A suggested way to tease apart what makes certain species more likely to respond 
+positively to different nutrient enrichment treatments is through some variety 
+of decision tree.
+
+When we have a set of hierarchical predictors that range from site-level predictors
+(precip, temp, species richness) to more individual-level predictors (functional 
+type, relative rank abundance), decision trees can offer a reasonably intuitive 
+way to model and interpet interactions between them.
+
+```{r}
+load("dotoutput.Rdata")
+
+library(tidyverse)
+
+head(specscores_full)
+
+head(bind_cols(attr.mat, cover.mat))
+
+specscores_full %>% gather(key = species,
+                           value = effect, 
+                           -c("site", "trt"))
+
+# Mean control cover of each species:
+cover.long %>% 
+  group_by(Taxon, site_code) %>%
+  filter(trt == "Control") %>%
+  summarise(meancov = mean(max_cover))
+
+
+
+```
+
