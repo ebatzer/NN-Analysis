@@ -49,8 +49,6 @@ soil.chars <- read.csv("../data/soil-nutrients-21-February-2019.csv",
                        stringsAsFactors = FALSE,
                        na.strings = c('NA','NULL'))
 
-biomass <- read.csv("../data/full-biomass-22-February-2019.csv")
-
 # Choose identifying variables
 ids <- c('site_code','year','year_trt', 'block','plot','trt')
 ```
@@ -66,6 +64,7 @@ soil.chars = soil.chars %>%
 soil.stdized = soil.chars %>% 
   select(site_code, block, plot, pct_N, pct_C, ppm_P, ppm_K) %>%
   na.omit() %>%
+  # Log-transform prior to calculate total resource availability? Or wait?
   mutate_if(is.numeric, log) 
 
 # Function to calculate network-wide site z-scores
@@ -79,26 +78,29 @@ pairs(soil.zscores %>%
   select(pct_N, ppm_P, ppm_K))
 
 solve(cor(soil.zscores %>% 
-  select(pct_N, ppm_P, ppm_K)))
-
+  select(pct_N, ppm_P, ppm_K, pct_C)))
 ```
 
 ```{r}
 # Plotting relative site resource availability
-p1 = res_avail_abs %>% ggplot(aes(x = pct_N_mean)) +
+p1 = soil.zscores %>% ggplot(aes(x = pct_N)) +
   geom_histogram(color = "black", fill = "lightblue") +
   xlim(0, 1)+
   ggtitle("Mean Site Soil %N")
 
-p2 =  res_avail_abs %>% ggplot(aes(x = ppm_P_mean)) +
+p2 =  soil.zscores %>% ggplot(aes(x = ppm_P)) +
   geom_histogram(color = "black", fill = "lightgreen") +
   ggtitle("Mean Site Soil ppm P")
 
-p3 = res_avail_abs %>% ggplot(aes(x = ppm_K_mean)) +
+p3 = soil.zscores %>% ggplot(aes(x = ppm_K)) +
   geom_histogram(color = "black", fill = "pink") +
   ggtitle("Mean Site Soil ppm K")
 
-gridExtra::grid.arrange(p1, p2, p3, nrow = 2)
+p4 = soil.zscores %>% ggplot(aes(x = pct_C)) +
+  geom_histogram(color = "black", fill = "orange") +
+  ggtitle("Mean Site Soil %C")
+
+gridExtra::grid.arrange(p1, p2, p3, p4, nrow = 2)
 ```
 
 # Calculating site stoichiometric ratios
@@ -141,11 +143,11 @@ stoichrat <- function(x){
   
   # "A" vector
   avec = sum(xvec * y) / sqrt(sum(y)) * (y / sqrt(sum(y)))
-  names(avec) = c("a_N", "a_P", "a_K")
+  names(avec) = c("a_N", "a_P", "a_K", "a_C")
   
   # "B" vector
   bvec = c(xvec - avec)
-  names(bvec) = c("b_N", "b_P", "b_K")
+  names(bvec) = c("b_N", "b_P", "b_K", "a_C")
   
   b = sqrt(sum(bvec^2))
 
@@ -164,16 +166,21 @@ stoichrat <- function(x){
 }
 
 # Relevant resources
-resources = res_avail_rel %>% 
-  select(pct_N_mean, ppm_P_mean, ppm_K_mean)
+resources = soil.zscores %>% 
+  select(pct_N, ppm_P, ppm_K, pct_C)
 
 # Stoichiometry output
 stoichout = apply(resources, MARGIN = 1, FUN = stoichrat)
 
-stoichtable = bind_cols(res_avail_rel %>% 
-  select(site_code, pct_N_mean, ppm_P_mean, ppm_K_mean),
+stoichtable = bind_cols(soil.zscores %>% 
+  select(site_code, block, plot, pct_N, ppm_P, ppm_K, pct_C),
   bind_rows(lapply(stoichout, `[`, c(1:4))))
 
-avecs = data.frame(matrix(unlist(lapply(stoichout, `[`, c(5))), ncol = 3, byrow = TRUE))
-names(avecs) = names(stoichout[[1]]$avec)
-bvecs = data.frame(matrix(unlist(lapply(stoichout, `[`, c(6))), ncol = 3, byrow = TRUE))
+write.csv("../Data/stoichtable.csv", x = stoichtable)
+
+hist(stoichtable$a)
+stoichsum = stoichtable %>% group_by(site_code, block) %>%
+  summarise(sdsupply = sd(a),
+            meansupply = mean(a))
+hist(stoichsum$sdsupply)
+```
