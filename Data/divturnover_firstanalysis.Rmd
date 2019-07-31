@@ -1,0 +1,114 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Initial Exploration of Resource Supply / Heterogeneity Relationships
+
+See other markdown files for calculation of diversity statistics (DivTurnover_divstats.Rmd) and environmental characteristics (DivTurnover_Envtl.Rmd).
+
+Spatial Resource Supply includes standardized abundance of:
+
+* N
+* P
+* K 
+* C
+
+Initial exploration focuses on two key aspects of resource supply in heterogeneity, both in spatial resource supply (soil resources) and temporal resource supply (climatic resources)
+
+# Loading packages
+
+```{r, message = FALSE, echo = FALSE}
+library(ggplot2) # Figure plotting
+library(tidyverse) # Data manipulation
+library(lme4) # Linear mixed effects models
+library(vegan) # General ecology functions
+library(data.table) # Fast reading of data tables
+library(testthat) # Unit testing
+library(dtplyr) # Data.table dplyr functions
+library(JostDiv) # Exponentiated diversity indices (Hill Numbers)
+library(gridExtra) # Multiple GGplots
+library(corrplot) # Correlation plots
+
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                      fig.width = 8.5, fig.height = 5)
+```
+
+# Reading in Datasets
+
+```{r}
+# Explanatory variables
+explanatory_var <- read.csv("../Data/divturnover_explanatory.csv",
+                           stringsAsFactors = FALSE,
+                           na.strings = c('NA','NULL'))
+
+# Temporal diversity
+temporal_div <- read.csv("../Data/diversity_temporal_full.csv",
+                           stringsAsFactors = FALSE,
+                           na.strings = c('NA','NULL'))
+
+# Spatial diversity
+spatial_div <- read.csv("../Data/diversity_spatial_full.csv",
+                           stringsAsFactors = FALSE,
+                           na.strings = c('NA','NULL'))
+
+# General plot descriptions
+plot.descriptions <- read.csv("../data/comb-by-plot-clim-soil-diversity-21-Feb-2019.csv",
+                           stringsAsFactors = FALSE,
+                           na.strings = c('NA','NULL'))
+
+```
+
+# Assembling dataset for full model
+
+```{r}
+full_table <- spatial_div %>% select(site_code, beta_q0, alpha_q0, plot) %>% rename("spatial_beta" = "beta_q0",
+                                                                "spatial_alpha" = "alpha_q0") %>%
+  full_join(temporal_div %>% select(site_code, beta_q0, alpha_q0, plot) %>% rename("temporal_beta" = "beta_q0",
+                                                                "temporal_alpha" = "alpha_q0")) %>%
+  left_join(explanatory_var) %>% select(-X)
+
+biomass_summary <- plot.descriptions %>% 
+  filter(year_trt == 0) %>% 
+  select(site_code, live_mass) %>%
+  group_by(site_code) %>%
+  summarise(mean_biomass = mean(na.omit(live_mass)),
+            cv_biomass = sd(na.omit(live_mass)) / mean(na.omit(live_mass)))
+
+full_table <- full_table %>% left_join(biomass_summary)
+```
+
+# Running basic full model
+
+
+```{r}
+full_table %>% select(mean_biomass, cv_biomass, mean_supply, sd_supply, mean_wtrdef, sd_wtrdef) %>% pairs(.)
+```
+
+```{r}
+plot(mean_biomass ~ mean_supply, full_table)
+```
+
+```{r}
+par(mfrow = c(1,2))
+plot(spatial_alpha ~ mean_biomass, full_table)
+plot(spatial_alpha ~ mean_supply, full_table)
+
+```
+
+
+
+```{r}
+mod1 <- lmer(spatial_alpha ~ mean_supply + sd_supply + ann_frac + grazed + MAP_v2 + (1|site_code),
+     data = full_table)
+
+mod2 <- lmer(spatial_alpha ~ mean_biomass + cv_biomass + (1|site_code),
+     data = full_table)
+
+mod3 <- lmer(temporal_beta ~ mean_biomass + cv_biomass + (1|site_code),
+     data = full_table)
+
+summary(mod2)
+summary(mod3)
+```
+

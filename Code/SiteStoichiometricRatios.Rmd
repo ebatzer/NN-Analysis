@@ -184,3 +184,5 @@ stoichsum = stoichtable %>% group_by(site_code, block) %>%
             meansupply = mean(a))
 hist(stoichsum$sdsupply)
 ```
+
+

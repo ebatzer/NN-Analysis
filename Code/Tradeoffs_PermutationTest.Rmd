@@ -1,0 +1,410 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Assuming a model of the form:
+
+$$ Y ~ \beta_0 + \beta_1 * Trt + \beta_2 * Year + \gamma Block  + \epsilon $$
+
+The angle of trajectory between different treatments can be calculated as the dot-product of estimated model coefficients.
+
+Here, a null hypothesis may be that treatments have the same trajectory -- an angle of 0. Collyer and Adams (2013) define a standardized test statistic for testing the differences in this angle by:
+
+$$ Z = \frac{\theta_{obs} - E[\theta]}{\hat\sigma_{\theta}} $$
+
+Which is equivalent to:
+
+$$ Z = \frac{\theta_{obs}}{\hat\sigma_{\theta}} $$
+
+When the expectation of theta is zero under the null model.
+
+Therefore, I by permuting treatment labels within blocks and years, we should be able to come up with an estimate of the standard deviation of this angle, or alternatively, determine a null distribution of angle values to compare against.
+
+# Pseudocode
+
+# Select pairwise comparison (1 of 3) -- NP, NK, PK
+# For a given number of permutations
+  # Apply a permutation using year:block as the strata
+  # Run RRPP with no permutations
+  # Pull out fitted N and P response coefficients
+  # Store a dataframe containing info on:
+    # Site name
+    # Pairwise comparison
+    # Permutation number
+    # Fitted coefficients
+
+## This should be sufficient to do any number of comparisons possible with trajectories -- total net change per unit time, difference in angle, or "shape" if needed. 
+
+```{r, message = FALSE, echo = FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE,fig.width = 5, fig.height = 3.5)
+
+# Loading necessary packages
+library(tidyverse) # Data manipulation
+library(vegan) # General ecology functions
+library(data.table) # Fast reading of data tables
+library(testthat) # Unit testing
+library(fastDummies) # Fast generation of dummy variables
+library(dtplyr) #Dplyr for data.table
+library(RRPP) # RRPP for multivariate model fitting
+library(progress)
+
+```
+
+```{r}
+# Community data wide format
+cover.wide <- read.csv("../Data/cover_wide_tradeoffs.csv")
+
+# Analysis parameters
+min_yr_trt <- 5 # Number of years minimum to be included in analysis
+```
+
+```{r}
+# Checking that all cover values are numeric
+cols <- c(colnames(cover.wide)[-c(1:6)])
+cover.wide[-c(1:6)] <- apply(cover.wide[-c(1:6)], MARGIN = 2, FUN = as.numeric)
+
+# Separating dataframe into cover and attribute 
+attr.mat = cover.wide[,1:7] %>% column_to_rownames(var="X")
+cover.vals = data.frame(cover.wide[,-c(2:7)]) %>% column_to_rownames(var="X")
+
+# Should we normalize?
+## Normalizing might be standard if we're dealing in proportions
+## However, we have a minimum cover threshold, usually about .5
+## normalizing in this case might cause problems if we have total cover increasing
+## this can cause low-abundance species to become less abundant, even if they are
+## the same absolute abundance in both cases
+
+# cover.mat = round(vegan::decostand(cover.vals, method = "total"), 3)
+cover.mat = cover.vals
+
+# Creating new dummy variables that refer to numeric treatment effects
+attr.mat = dummy_columns(attr.mat, select_columns = "trt", 
+                           remove_first_dummy = TRUE) %>%
+  replace_na(list(trt_K = 0, trt_N = 0, trt_P = 0)) %>%
+  mutate(trt_K_num = as.numeric(trt_K * year_trt),
+         trt_P_num = as.numeric(trt_P * year_trt),
+         trt_N_num = as.numeric(trt_N * year_trt),
+         year_trt = as.numeric(year_trt))
+
+# Setting treatment effects to zero for the first year of treatment
+attr.mat$trt_K[attr.mat$year_trt == 0] = 0
+attr.mat$trt_P[attr.mat$year_trt == 0] = 0
+attr.mat$trt_N[attr.mat$year_trt == 0] = 0
+
+# Cleaning workspace
+rm(cover.wide, cover.vals)
+```
+
+```{r}
+# Calculate unit length function
+scalar1 <- function(x) {x / sqrt(sum(x^2))}
+
+# Dot product function
+dotfunc <- function(x){
+  vec1_length <- sqrt(sum(x[1,-c(1:2)]^2))
+  vec2_length <- sqrt(sum(x[2,-c(1:2)]^2))
+  dotprod <- pracma::dot(as.numeric(x[1,-c(1:2)] / vec1_length), 
+                        as.numeric(x[2,-c(1:2)] / vec2_length))
+  outputdf <- data.frame(dotprod, vec1_length, vec2_length)
+  names(outputdf) <- c("dot", as.character(x$trt))
+  return(outputdf)
+}
+
+# Define pairwise comparison of interest
+trts = c("N", "P")
+
+# Number of permutations
+nperm = 999
+
+# Define site of interest
+counter <- 1
+
+sitenames = unique(attr.mat$site_code)
+sitenames = sitenames[!(sitenames %in% c("doane.us", "pape.de", "sevi.us"))]
+
+# Create general output list
+permoutput <- list()
+
+# For all unique sites selected
+for(sitename in sitenames){
+
+  print(paste(counter,":", sitename))
+
+  # Subset to a single site
+  com.subset <- cover.mat[attr.mat$site_code == sitename,]
+  
+  # Remove all zero columns
+  com.subset <- com.subset[,colSums(com.subset) > 0]
+  
+  # Pull out relevant plot attributes for each site
+  attr.subset <- data.frame(attr.mat) %>% 
+    filter(site_code == sitename) %>%
+    mutate(year_trt = as.factor(year_trt),
+           plot = as.factor(plot),
+           block = as.factor(block))
+  
+    
+  # Find rows of dataframe that correspond to these values
+  rows = which(attr.subset$trt %in% trts)
+  
+  # Define grouping variable
+  grps = paste(attr.subset$year_trt[rows], attr.subset$block[rows])
+  CTRL <- how(blocks = grps)
+  
+  listout = list()
+  
+  pb <- progress_bar$new(total = nperm)
+  pb$tick(0)
+
+  for(permno in 1:nperm){
+    
+    pb$tick()
+    
+    # Shuffle treatment labels 
+    perm <- shuffle(rows, control = CTRL)
+    attr.subset[rows,] = attr.subset[rows[perm],]
+    
+    # Run RRPP
+    mod_rrpp <- lm.rrpp(com.subset ~ year_trt + trt_K_num + trt_P_num + trt_N_num + block,
+                        data = attr.subset, 
+                        iter = 0, 
+                        print.progress = FALSE)
+    
+    # Pull out coefs
+    perm_coefs = coef(mod_rrpp)
+    grepstring = paste("_", trts[1], "_|_", trts[2], "_", sep = "")
+    savedcoefs = perm_coefs[grep(grepstring, rownames(perm_coefs)),]
+    
+    # Bind output dataframe to list
+    output = data.frame(perm = permno,
+                        trt = rownames(savedcoefs),
+                        savedcoefs)
+    rownames(output) = rownames(savedcoefs)
+    listout[[permno]] = output
+  }
+  
+  permoutput[[counter]] = bind_rows(listout) %>% 
+    group_by(perm) %>%
+    do(dotfunc(.[1:2,])) %>%
+    mutate(site = sitename)
+
+  counter <- counter + 1
+  
+}
+
+NP_output = bind_rows(permoutput) 
+NP_output[is.na(NP_output)] = 0
+
+write.csv(x = NP_output,
+          "../Data/NP_perms.csv")
+
+BRRR::skrrrahh(16)
+
+```
+
+```{r}
+
+# Define pairwise comparison of interest
+trts = c("N", "K")
+
+# Number of permutations
+nperm = 999
+
+# Define site of interest
+counter <- 1
+
+sitenames = unique(attr.mat$site_code)
+sitenames = sitenames[!(sitenames %in% c("doane.us", "pape.de", "sevi.us"))]
+
+# Create general output list
+permoutput <- list()
+
+# For all unique sites selected
+for(sitename in sitenames){
+
+  print(paste(counter,":", sitename))
+
+  # Subset to a single site
+  com.subset <- cover.mat[attr.mat$site_code == sitename,]
+  
+  # Remove all zero columns
+  com.subset <- com.subset[,colSums(com.subset) > 0]
+  
+  # Pull out relevant plot attributes for each site
+  attr.subset <- data.frame(attr.mat) %>% 
+    filter(site_code == sitename) %>%
+    mutate(year_trt = as.factor(year_trt),
+           plot = as.factor(plot),
+           block = as.factor(block))
+  
+    
+  # Find rows of dataframe that correspond to these values
+  rows = which(attr.subset$trt %in% trts)
+  
+  # Define grouping variable
+  grps = paste(attr.subset$year_trt[rows], attr.subset$block[rows])
+  CTRL <- how(blocks = grps)
+  
+  listout = list()
+  
+  pb <- progress_bar$new(total = nperm)
+  pb$tick(0)
+
+  for(permno in 1:nperm){
+    
+    pb$tick()
+    
+    # Shuffle treatment labels 
+    perm <- shuffle(rows, control = CTRL)
+    attr.subset[rows,] = attr.subset[rows[perm],]
+    
+    # Run RRPP
+    mod_rrpp <- lm.rrpp(com.subset ~ year_trt + trt_K_num + trt_P_num + trt_N_num + block,
+                        data = attr.subset, 
+                        iter = 0, 
+                        print.progress = FALSE)
+    
+    # Pull out coefs
+    perm_coefs = coef(mod_rrpp)
+    grepstring = paste("_", trts[1], "_|_", trts[2], "_", sep = "")
+    savedcoefs = perm_coefs[grep(grepstring, rownames(perm_coefs)),]
+    
+    # Bind output dataframe to list
+    output = data.frame(perm = permno,
+                        trt = rownames(savedcoefs),
+                        savedcoefs)
+    rownames(output) = rownames(savedcoefs)
+    listout[[permno]] = output
+  }
+  
+  permoutput[[counter]] = bind_rows(listout) %>% 
+    group_by(perm) %>%
+    do(dotfunc(.[1:2,])) %>%
+    mutate(site = sitename)
+
+  counter <- counter + 1
+  
+}
+
+NP_output = bind_rows(permoutput) 
+NP_output[is.na(NP_output)] = 0
+
+write.csv(x = NP_output,
+          "../Data/NK_perms.csv")
+
+BRRR::skrrrahh(16)
+
+```
+
+```{r}
+
+# Define pairwise comparison of interest
+trts = c("P", "K")
+
+# Number of permutations
+nperm = 999
+
+# Define site of interest
+counter <- 1
+
+sitenames = unique(attr.mat$site_code)
+sitenames = sitenames[!(sitenames %in% c("doane.us", "pape.de", "sevi.us"))]
+
+# Create general output list
+permoutput <- list()
+
+# For all unique sites selected
+for(sitename in sitenames){
+
+  print(paste(counter,":", sitename))
+
+  # Subset to a single site
+  com.subset <- cover.mat[attr.mat$site_code == sitename,]
+  
+  # Remove all zero columns
+  com.subset <- com.subset[,colSums(com.subset) > 0]
+  
+  # Pull out relevant plot attributes for each site
+  attr.subset <- data.frame(attr.mat) %>% 
+    filter(site_code == sitename) %>%
+    mutate(year_trt = as.factor(year_trt),
+           plot = as.factor(plot),
+           block = as.factor(block))
+  
+    
+  # Find rows of dataframe that correspond to these values
+  rows = which(attr.subset$trt %in% trts)
+  
+  # Define grouping variable
+  grps = paste(attr.subset$year_trt[rows], attr.subset$block[rows])
+  CTRL <- how(blocks = grps)
+  
+  listout = list()
+  
+  pb <- progress_bar$new(total = nperm)
+  pb$tick(0)
+
+  for(permno in 1:nperm){
+    
+    pb$tick()
+    
+    # Shuffle treatment labels 
+    perm <- shuffle(rows, control = CTRL)
+    attr.subset[rows,] = attr.subset[rows[perm],]
+    
+    # Run RRPP
+    mod_rrpp <- lm.rrpp(com.subset ~ year_trt + trt_K_num + trt_P_num + trt_N_num + block,
+                        data = attr.subset, 
+                        iter = 0, 
+                        print.progress = FALSE)
+    
+    # Pull out coefs
+    perm_coefs = coef(mod_rrpp)
+    grepstring = paste("_", trts[1], "_|_", trts[2], "_", sep = "")
+    savedcoefs = perm_coefs[grep(grepstring, rownames(perm_coefs)),]
+    
+    # Bind output dataframe to list
+    output = data.frame(perm = permno,
+                        trt = rownames(savedcoefs),
+                        savedcoefs)
+    rownames(output) = rownames(savedcoefs)
+    listout[[permno]] = output
+  }
+  
+  permoutput[[counter]] = bind_rows(listout) %>% 
+    group_by(perm) %>%
+    do(dotfunc(.[1:2,])) %>%
+    mutate(site = sitename)
+
+  counter <- counter + 1
+  
+}
+
+NP_output = bind_rows(permoutput) 
+NP_output[is.na(NP_output)] = 0
+
+write.csv(x = NP_output,
+          "../Data/PK_perms.csv")
+
+BRRR::skrrrahh(16)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

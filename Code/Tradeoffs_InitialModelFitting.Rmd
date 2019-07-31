@@ -1,0 +1,218 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r, message = FALSE, echo = FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE,fig.width = 5, fig.height = 3.5)
+
+# Loading necessary packages
+library(tidyverse) # Data manipulation
+library(vegan) # General ecology functions
+library(data.table) # Fast reading of data tables
+library(testthat) # Unit testing
+library(fastDummies) # Fast generation of dummy variables
+library(dtplyr) #Dplyr for data.table
+library(RRPP) # RRPP for multivariate model fittinginsta
+```
+
+# Reading in dataframes
+
+```{r}
+# Community data wide format
+cover.wide <- read.csv("../Data/cover_wide_tradeoffs.csv")
+
+# Analysis parameters
+min_yr_trt <- 5 # Number of years minimum to be included in analysis
+```
+
+```{r}
+# Checking that all cover values are numeric
+cols <- c(colnames(cover.wide)[-c(1:6)])
+cover.wide[-c(1:6)] <- apply(cover.wide[-c(1:6)], MARGIN = 2, FUN = as.numeric)
+
+# Separating dataframe into cover and attribute 
+attr.mat = cover.wide[,1:7] %>% column_to_rownames(var="X")
+cover.vals = data.frame(cover.wide[,-c(2:7)]) %>% column_to_rownames(var="X")
+
+# Should we normalize?
+## Normalizing might be standard if we're dealing in proportions
+## However, we have a minimum cover threshold, usually about .5
+## normalizing in this case might cause problems if we have total cover increasing
+## this can cause low-abundance species to become less abundant, even if they are
+## the same absolute abundance in both cases
+
+# cover.mat = round(vegan::decostand(cover.vals, method = "total"), 3)
+cover.mat = cover.vals
+
+# Creating new dummy variables that refer to numeric treatment effects
+attr.mat = dummy_columns(attr.mat, select_columns = "trt", 
+                           remove_first_dummy = TRUE) %>%
+  replace_na(list(trt_K = 0, trt_N = 0, trt_P = 0)) %>%
+  mutate(trt_K_num = as.numeric(trt_K * year_trt),
+         trt_P_num = as.numeric(trt_P * year_trt),
+         trt_N_num = as.numeric(trt_N * year_trt),
+         year_trt = as.numeric(year_trt))
+
+# Setting treatment effects to zero for the first year of treatment
+attr.mat$trt_K[attr.mat$year_trt == 0] = 0
+attr.mat$trt_P[attr.mat$year_trt == 0] = 0
+attr.mat$trt_N[attr.mat$year_trt == 0] = 0
+
+# Cleaning workspace
+rm(cover.wide, cover.vals)
+```
+
+
+```{r}
+output_list <- list()
+counter <- 1
+
+sitenames = unique(attr.mat$site_code)
+sitenames = sitenames[!(sitenames %in% c("doane.us", "pape.de", "sevi.us"))]
+
+# For all unique sites selected
+for(sites in sitenames){
+
+  print(paste(counter,":", sites))
+  
+  # Subset to a single site
+  com.subset <- cover.mat[attr.mat$site_code == sites,]
+  
+  # Remove all zero columns
+  com.subset <- com.subset[,colSums(com.subset) > 0]
+  
+  # Pull out relevant plot attributes for each site
+  attr.subset <- data.frame(attr.mat) %>% 
+    filter(site_code == sites) %>%
+    mutate(year_trt = as.factor(year_trt),
+           plot = as.factor(plot),
+           block = as.factor(block))
+  
+  # Check that these two matrices are the same size
+  expect_true(nrow(attr.subset) == nrow(com.subset))
+  expect_true(nrow(attr.subset) > 0)
+  
+  mod_rrpp <- lm.rrpp(com.subset ~ year_trt + trt_K_num + trt_P_num + trt_N_num + block,
+                      data = attr.subset, 
+                      SS.type = "III", 
+                      iter = 9999, 
+                      print.progress = FALSE)
+  
+  # Saving ouput
+  output = list(siteinfo = attr.subset,
+                aovtable = anova(mod_rrpp, effect.type = "F",
+                                  error = c("Residuals", "Residuals", "Residuals",
+                                            "Residuals", "Residuals")),
+                specscores = coef(mod_rrpp)) 
+  
+  output_list[[counter]] = output
+  counter = counter + 1
+}
+```
+
+```{r}
+storagelist <- list()
+
+for(i in 1:length(output_list)){
+
+  anovatab = bind_cols(site = as.character(unique(output_list[[i]]$siteinfo$site_code)),
+            data.frame(matrix(output_list[[i]]$aovtable$table$`Pr(>F)`, nrow = 1)))
+  
+  colnames(anovatab)[2:ncol(anovatab)] =   rownames(output_list[[i]]$aovtable$table)
+  
+  storagelist[[i]] = anovatab
+
+}
+
+write.csv(x = bind_rows(storagelist),
+  "../Data/tradeoffs_RRPP_Pvals.csv")
+
+storagelist <- list()
+
+for(i in 1:length(output_list)){
+  sp_scores = data.frame(output_list[[i]]$specscores[grep("trt_", rownames(output_list[[i]]$specscores)),])
+  
+  tomatch = c(4:10)
+  # sp_scores = sp_scores[grepl(paste(tomatch, collapse = "|"), rownames(sp_scores)),]
+  
+  spectab = bind_cols(site = rep(unique(output_list[[i]]$siteinfo$site_code), nrow(sp_scores)),
+                    trt = rownames(sp_scores),
+                    sp_scores)
+  
+  storagelist[[i]] = spectab %>% mutate(trt = gsub("_num", "", trt))
+
+                    # %>%
+                    # mutate(trt = gsub("_num).+", "", trt)) %>%
+                    # mutate(trt = gsub("as.factor\\(", "", trt)) %>%
+                    # group_by(site, trt) %>%
+                    # summarise_all(mean)
+}
+
+specscores_full = data.frame(bind_rows(storagelist))
+specscores_full[is.na(specscores_full)] = 0
+write.csv(specscores_full, "../Data/tradeoffs_specscores.csv")
+```
+
+### Calculate dot-product of pairwise correlations
+
+Given these estimated parameters, we can calculate the correlation between species responses
+to different pairs of nutrient treatments through the dot-product of the fitted
+vectors between treatments within a site.
+
+After calculating this dot-product, the distributions of each set correlation scores can be seen in histograms below:
+
+* Values close to zero indicate that species responses to two treatments within a site are not correlated with one another.
+
+* Values close to one or negative one indicate that species responses to two treatments within a site are highly positively or negatively correlated.
+
+```{r}
+# Normalization function -- squared sums of vector = 1
+scalar1 <- function(x) {x / sqrt(sum(x^2))}
+
+# Defining dot-product function
+dotprod <- function(x, normalize = TRUE){
+  
+  # First, select the appropriate treatment and remove columns that aren't plant response
+  N_vec <- x %>% filter(trt == "trt_N") %>% select(-trt, -site)
+  P_vec <- x %>% filter(trt == "trt_P") %>% select(-trt, -site)
+  K_vec <- x %>% filter(trt == "trt_K") %>% select(-trt, -site)
+  
+  N_change <- sqrt(sum(N_vec^2))
+  P_change <- sqrt(sum(P_vec^2))
+  K_change <- sqrt(sum(K_vec^2))
+  
+  # If normalizing, run the normalize function on each vector
+  if(normalize == TRUE){
+    N_vec <- scalar1(N_vec)
+    P_vec <- scalar1(P_vec)
+    K_vec <- scalar1(K_vec)
+  }
+  
+  # Generate output dataframe of dot products (pracma::dot function)
+  output = data.frame(NP = pracma::dot(as.numeric(N_vec), as.numeric(P_vec)),
+                      NK = pracma::dot(as.numeric(N_vec), as.numeric(K_vec)),
+                      PK = pracma::dot(as.numeric(P_vec), as.numeric(K_vec)),
+                      N_change = N_change,
+                      P_change = P_change,
+                      K_change = K_change)
+  
+  return(output)
+  
+}
+
+# Run over our dataset
+dotoutput = specscores_full %>% group_by(site) %>%
+  do(dotprod(.))
+
+# Load permANOVA p-value output
+site_pvals = read.csv("../Data/tradeoffs_RRPP_Pvals.csv", header = TRUE, stringsAsFactors = FALSE)
+
+# Join all together (sites, treatments, dot-product pairs, perMANOVA p-values)
+dot_full = left_join(site_pvals %>% select(-Total, -Residuals), dotoutput) %>% 
+  select(-X) %>% 
+  rename("trt_K" = "trt_K_num", "trt_P" =  "trt_P_num", "trt_N" = "trt_N_num")
+
+# Write final data product
+write.csv(x = dot_full, "../Data/dot_full.csv")
+```

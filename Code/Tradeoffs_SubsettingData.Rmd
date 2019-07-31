@@ -1,0 +1,158 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Preparing datasets for analysis
+
+Compiled on `r date()`
+
+### Questions for working group:
+
+* How to deal with sites that have missing observations for one year? Just proceed as usual?
+
+```{r, message = FALSE, echo = FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE,fig.width = 5, fig.height = 3.5)
+
+# Loading necessary packages
+library(tidyverse) # Data manipulation
+library(vegan) # General ecology functions
+library(data.table) # Fast reading of data tables
+library(testthat) # Unit testing
+library(dtplyr) #Dplyr for data.table
+```
+
+### Reading in datasets
+
+```{r}
+# Biomass data
+biomass_data <- fread("../Data/comb-by-plot-16-July-2019.csv",
+                  stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+
+# Cover
+cover <- fread('../Data/full-cover-16-July-2019.csv',
+                  stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+
+# Soil characteristics
+soil.chars <- read.csv("../Data/soil-nutrients-21-February-2019.csv",
+                              stringsAsFactors = FALSE)
+
+# Site covariates
+site.covars <- read.csv("../Data/site_covars.csv",
+                        stringsAsFactors = FALSE)
+
+# Analysis parameters
+min_yr_trt <- 5 # Number of years minimum to be included in analysis
+```
+
+#### Cleaning datasets
+
+```{r}
+# Converting some columns to factor prior to joining
+biomass_data$site_code <- factor(biomass_data$site_code)
+biomass_data$trt <- factor(biomass_data$trt)
+
+# Generate table of sites by years of treatment
+sites_table <- biomass_data %>% 
+  group_by(site_code,region,first_nutrient_year) %>% 
+  summarise(yrs.data = length(unique(year)),fyear = min(year), lyear = max(year)) %>% 
+  arrange(yrs.data)
+
+# Create site vector sites with at least X years of data
+sites_table.long <- as.character(sites_table[yrs.data >= min_yr_trt,`site_code`])
+
+# Filtering cover data to just live plants
+cover.long <- cover[site_code%in%c(sites_table.long) & live==1,]
+cover.long$max_cover = as.numeric(cover.long$max_cover)
+
+# Cleaning workspace
+rm(sites_table, cover)
+```
+
+### Editing datasets, converting to wide format
+
+```{r}
+# Choosing only our treatments of interest
+cover.long <- cover.long[trt %in% c('Control','N','P','K')]
+
+# Clean out unknowns, non-vascular plants
+sps <- unique(cover.long$Taxon)
+unwanted.sps <- sps[c(grep('UNKNOWN',sps),grep('BRYOPHYTE',sps),grep('LICHEN',sps))]
+cover.long <- cover.long[!(Taxon %in% unwanted.sps | local_lifeform == 'MOSS' | functional_group == 'BRYOPHYTE')]
+
+# Removing the "GRAMINOID" functional group label, converting to just "GRASS"
+cover.long[functional_group =='GRAMINOID', functional_group := 'GRASS']
+
+# Filtering odd plot layouts
+## Some sites have multiple control plots in a block.
+## Choosing only the lowest numbered plot belong to a treatment in each block.
+## This takes care of a few sites that have strange plot configurations,
+## like sgs.us
+
+site.plots.keep <- cover.long %>% 
+  group_by(site_code,block,plot,trt) %>% 
+  summarise(yrs.data = length(unique(year))) %>% 
+  filter(yrs.data >= min_yr_trt)
+
+site.plots.keep <- left_join(site.plots.keep,
+                             site.plots.keep %>% group_by(site_code,block,trt) %>% 
+                               summarize(min.plot = min(plot))) %>% 
+  filter(plot == min.plot) %>% 
+  select(-min.plot,-yrs.data)
+
+# Joining into master long-format cover dataframe
+cover.long <- left_join(site.plots.keep, cover.long)
+
+# Remove unused factor levels
+cover.long <- droplevels(cover.long) 
+
+# cast long into wide
+cover.wide <- dcast(cover.long,site_code+year+block+plot+trt+year_trt ~ Taxon,
+                    value.var='max_cover', 
+                    fun.aggregate = sum,drop=T,fill=0)
+
+# Cleaning workspace
+rm(sps, unwanted.sps, site.plots.keep)
+```
+
+### Summarizing available datasets
+
+```{r}
+# Histogram of number of observations
+## Some sites seem to have uneven number of observations within each treatment
+cover.wide %>% 
+  group_by(site_code, trt) %>%
+  summarise(obs = n(),
+            yrtrt = max(year_trt)) %>%
+  ggplot(aes(x = obs,
+             fill = trt)) +
+  geom_histogram(alpha = .5, position = position_dodge()) +
+  ggtitle("Distribution of Observations")
+
+# Table of sites with uneven distributions
+uneven_sites = cover.wide %>% 
+  group_by(site_code, trt) %>%
+  summarise(obs = n()) %>%
+  group_by(site_code) %>%
+  summarise(even_observations = n_distinct(obs)) %>%
+  filter(even_observations > 1)
+
+to_filter = cover.wide %>% 
+  group_by(site_code, trt) %>%
+  summarise(obs = n(),
+            yrtrt = max(year_trt)) %>%
+  filter(site_code %in% uneven_sites$site_code)
+
+unique(to_filter$site_code)
+```
+
+#### Writing final data frame for analysis
+
+```{r}
+write.csv(x = cover.wide, "../Data/cover_wide_tradeoffs.csv")
+```
+

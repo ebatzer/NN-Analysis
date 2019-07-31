@@ -1,0 +1,74 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r, message = FALSE, echo = FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE,fig.width = 5, fig.height = 3.5)
+
+# Loading necessary packages
+library(tidyverse) # Data manipulation
+library(vegan) # General ecology functions
+library(data.table) # Fast reading of data tables
+library(testthat) # Unit testing
+library(fastDummies) # Fast generation of dummy variables
+library(dtplyr) #Dplyr for data.table
+library(RRPP) # RRPP for multivariate model fitting
+library(progress)
+```
+
+```{r}
+np_perms <- read.csv("../Data/NP_perms.csv")
+
+nk_perms <- read.csv("../Data/NK_perms.csv")
+
+pk_perms <- read.csv("../Data/PK_perms.csv")
+
+dot_est <- read.csv("../Data/dot_full.csv")
+
+head(dot_est)
+
+
+np_sig = np_perms %>% 
+  group_by(site) %>%
+  summarise(dot_lwr01 = quantile(dot, .01),
+            dot_lwr05 = quantile(dot, .05),
+            dot_upr95 = quantile(dot, .95),
+            dot_upr99 = quantile(dot, .99),
+            dot_median = median(dot)) %>%
+  full_join(dot_est %>% select(site, trt_K, trt_P, trt_N, NP)) %>%
+  transmute(site = site,
+         NP_sig = case_when(NP < dot_lwr01 ~ "**",
+                               NP < dot_lwr05 ~ "*",
+                               TRUE ~ ""))
+
+nk_sig = nk_perms %>% 
+  group_by(site) %>%
+  summarise(dot_lwr01 = quantile(dot, .01),
+            dot_lwr05 = quantile(dot, .05),
+            dot_upr95 = quantile(dot, .95),
+            dot_upr99 = quantile(dot, .99),
+            dot_median = median(dot)) %>%
+  full_join(dot_est %>% select(site, trt_K, trt_P, trt_N, NK)) %>%
+  transmute(site = site,
+         NK_sig = case_when(NK < dot_lwr01 ~ "**",
+                               NK < dot_lwr05 ~ "*",
+                               TRUE ~ ""))
+
+pk_sig = pk_perms %>% 
+  group_by(site) %>%
+  summarise(dot_lwr01 = quantile(dot, .01),
+            dot_lwr05 = quantile(dot, .05),
+            dot_upr95 = quantile(dot, .95),
+            dot_upr99 = quantile(dot, .99),
+            dot_median = median(dot)) %>%
+  full_join(dot_est %>% select(site, trt_K, trt_P, trt_N, PK)) %>%
+  transmute(site = site,
+         PK_sig = case_when(PK < dot_lwr01 ~ "**",
+                               PK < dot_lwr05 ~ "*",
+                               TRUE ~ ""))
+
+full_join(dot_est, np_sig) %>% full_join(nk_sig) %>% full_join(pk_sig)
+```
+

@@ -190,7 +190,6 @@ cover.wide <- dcast(cover.long,site_code+year+block+plot+trt+year_trt ~ Taxon,
 
 ```{r}
 # Adding in additional info
-
 siteinfo <- biomass_data[site_code %in% sites.long, 
                          .(`site_code`,`site_name`,`continent`,`region`,
                            `first_nutrient_year`,`site_richness`)] %>% 
