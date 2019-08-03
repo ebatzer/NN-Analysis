@@ -7,14 +7,14 @@ output: html_notebook
 
 See other markdown files for calculation of diversity statistics (DivTurnover_divstats.Rmd) and environmental characteristics (DivTurnover_Envtl.Rmd).
 
-Spatial Resource Supply includes standardized abundance of:
+Resource Supply includes standardized abundance of:
 
 * N
 * P
 * K 
 * C
 
-Initial exploration focuses on two key aspects of resource supply in heterogeneity, both in spatial resource supply (soil resources) and temporal resource supply (climatic resources)
+Initial exploration focuses on two key aspects of resource supply in heterogeneity, both in resource supply (soil resources) and temporal resource supply (climatic resources)
 
 # Loading packages
 
@@ -47,7 +47,7 @@ temporal_div <- read.csv("../Data/diversity_temporal_full.csv",
                            stringsAsFactors = FALSE,
                            na.strings = c('NA','NULL'))
 
-# Spatial diversity
+# diversity
 spatial_div <- read.csv("../Data/diversity_spatial_full.csv",
                            stringsAsFactors = FALSE,
                            na.strings = c('NA','NULL'))
@@ -62,53 +62,436 @@ plot.descriptions <- read.csv("../data/comb-by-plot-clim-soil-diversity-21-Feb-2
 # Assembling dataset for full model
 
 ```{r}
-full_table <- spatial_div %>% select(site_code, beta_q0, alpha_q0, plot) %>% rename("spatial_beta" = "beta_q0",
-                                                                "spatial_alpha" = "alpha_q0") %>%
-  full_join(temporal_div %>% select(site_code, beta_q0, alpha_q0, plot) %>% rename("temporal_beta" = "beta_q0",
-                                                                "temporal_alpha" = "alpha_q0")) %>%
+full_table <- spatial_div %>% 
+  select(site_code, alpha_q0, beta_q0,gamma_q0, alpha_q2, beta_q2, gamma_q2, plot) %>% 
+  group_by(site_code) %>%
+  summarise(beta_q0 = mean(beta_q0),
+            alpha_q0 = mean(alpha_q0),
+            gamma_q0 = mean(gamma_q0),
+            beta_q2 = mean(beta_q2),
+            alpha_q2 = mean(alpha_q2),
+            gamma_q2 = mean(gamma_q2)) %>%
+  rename("spatial_beta_q0" = "beta_q0",
+         "spatial_alpha_q0" = "alpha_q0",
+         "spatial_gamma_q0" = "gamma_q0",
+         "spatial_beta_q2" = "beta_q2",
+         "spatial_alpha_q2" = "alpha_q2",
+         "spatial_gamma_q2" = "gamma_q2") %>%
+  full_join(temporal_div %>%
+              select(site_code, alpha_q0, beta_q0,gamma_q0, alpha_q2, beta_q2, gamma_q2, plot) %>% 
+              group_by(site_code) %>%
+              summarise(beta_q0 = mean(beta_q0),
+                        alpha_q0 = mean(alpha_q0),
+                        gamma_q0 = mean(gamma_q0),
+                        beta_q2 = mean(beta_q2),
+                        alpha_q2 = mean(alpha_q2),
+                        gamma_q2 = mean(gamma_q2)) %>%
+              rename("temporal_beta_q0" = "beta_q0",
+                     "temporal_alpha_q0" = "alpha_q0",
+                     "temporal_gamma_q0" = "gamma_q0",
+                     "temporal_beta_q2" = "beta_q2",
+                     "temporal_alpha_q2" = "alpha_q2",
+                     "temporal_gamma_q2" = "gamma_q2")) %>%
   left_join(explanatory_var) %>% select(-X)
 
-biomass_summary <- plot.descriptions %>% 
+biomass_summary_spatial <- plot.descriptions %>% 
   filter(year_trt == 0) %>% 
-  select(site_code, live_mass) %>%
+  select(site_code, total_mass) %>%
   group_by(site_code) %>%
-  summarise(mean_biomass = mean(na.omit(live_mass)),
-            cv_biomass = sd(na.omit(live_mass)) / mean(na.omit(live_mass)))
+  summarise(spatial_mean_biomass = mean(na.omit(total_mass)),
+            spatial_cv_biomass = sd(na.omit(total_mass)) / mean(na.omit(total_mass)))
 
-full_table <- full_table %>% left_join(biomass_summary)
+biomass_summary_temporal <- plot.descriptions %>% 
+  filter(year_trt < 5 & trt == "Control" & !is.na(first_nutrient_year)) %>% 
+  select(site_code, plot, total_mass) %>%
+  group_by(site_code, plot) %>%
+  summarise(temporal_mean_biomass = mean(na.omit(total_mass)),
+            temporal_cv_biomass = sd(na.omit(total_mass)) / mean(na.omit(total_mass))) %>%
+  filter(!is.na(temporal_cv_biomass))
+  # summarise(temporal_mean_biomass = mean(temporal_mean_biomass),
+  #          temporal_cv_biomass =  mean(temporal_cv_biomass))
+ 
+full_table <- full_table %>% left_join(biomass_summary_spatial) %>% left_join(biomass_summary_temporal)
 ```
 
-# Running basic full model
+# Basic summary statistics:
+
+## Spatial alpha, beta, and gamma diversity
+
+## Q = 0
+
+```{r}
+p1 <- ggplot(aes(x = spatial_gamma_q0,
+                 y = spatial_alpha_q0,
+                 color = site_code),
+             data = full_table) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, aes(color = NULL)) +
+  guides(color = FALSE) +
+  ggtitle("Alpha ~ Gamma")
+
+p2 <- ggplot(aes(x = spatial_gamma_q0,
+                 y = spatial_beta_q0,
+                 color = site_code),
+             data = full_table) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, aes(color = NULL)) +
+  guides(color = FALSE)+
+  ggtitle("Beta ~ Gamma")
+
+p3 <- ggplot(aes(x = spatial_beta_q0,
+                 y = spatial_alpha_q0,
+                 color = site_code),
+             data = full_table) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, aes(color = NULL)) +
+  guides(color = FALSE)+
+  ggtitle("Alpha ~ Beta")
+
+grid.arrange(p1, p2, p3, nrow = 1)
+```
+
+## Q = 2
+
+```{r}
+p1 <- ggplot(aes(x = spatial_gamma_q2,
+                 y = spatial_alpha_q2,
+                 color = site_code),
+             data = full_table) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, aes(color = NULL)) +
+  guides(color = FALSE) +
+  ggtitle("Alpha ~ Gamma")
+
+p2 <- ggplot(aes(x = spatial_gamma_q2,
+                 y = spatial_beta_q2,
+                 color = site_code),
+             data = full_table) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, aes(color = NULL)) +
+  guides(color = FALSE)+
+  ggtitle("Beta ~ Gamma")
+
+p3 <- ggplot(aes(x = spatial_beta_q2,
+                 y = spatial_alpha_q2,
+                 color = site_code),
+             data = full_table) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, aes(color = NULL)) +
+  guides(color = FALSE)+
+  ggtitle("Alpha ~ Beta")
+
+grid.arrange(p1, p2, p3, nrow = 1)
+```
+
+# Temporal alpha, beta, and gamma diversity
+
+## Q = 0
+
+```{r}
+p1 <- ggplot(aes(x = temporal_gamma_q0,
+                 y = temporal_alpha_q0,
+                 color = site_code),
+             data = full_table) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, aes(color = NULL)) +
+  guides(color = FALSE) +
+  ggtitle("Alpha ~ Gamma")
+
+p2 <- ggplot(aes(x = temporal_gamma_q0,
+                 y = temporal_beta_q0,
+                 color = site_code),
+             data = full_table) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, aes(color = NULL)) +
+  guides(color = FALSE)+
+  ggtitle("Beta ~ Gamma")
+
+p3 <- ggplot(aes(x = temporal_beta_q0,
+                 y = temporal_alpha_q0,
+                 color = site_code),
+             data = full_table) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, aes(color = NULL)) +
+  guides(color = FALSE)+
+  ggtitle("Alpha ~ Beta")
+
+grid.arrange(p1, p2, p3, nrow = 1)
+```
+
+## Q = 2
+
+```{r}
+p1 <- ggplot(aes(x = temporal_gamma_q2,
+                 y = temporal_alpha_q2,
+                 color = site_code),
+             data = full_table) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, aes(color = NULL)) +
+  guides(color = FALSE) +
+  ggtitle("Alpha ~ Gamma")
+
+p2 <- ggplot(aes(x = temporal_gamma_q2,
+                 y = temporal_beta_q2,
+                 color = site_code),
+             data = full_table) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, aes(color = NULL)) +
+  guides(color = FALSE)+
+  ggtitle("Beta ~ Gamma")
+
+p3 <- ggplot(aes(x = temporal_beta_q2,
+                 y = temporal_alpha_q2,
+                 color = site_code),
+             data = full_table) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, aes(color = NULL)) +
+  guides(color = FALSE)+
+  ggtitle("Alpha ~ Beta")
+
+grid.arrange(p1, p2, p3, nrow = 1)
+```
+
+
+# Correlations between temporal and spatial diversity
+
+## Q = 0
+
+```{r}
+p1 <- ggplot(aes(x = spatial_alpha_q0,
+                 y = temporal_alpha_q0,
+                 color = site_code),
+             data = full_table) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, aes(color = NULL)) +
+  guides(color = FALSE) +
+  ggtitle("Alpha ~ Alpha")
+
+p2 <- ggplot(aes(x = spatial_beta_q0,
+                 y = temporal_beta_q0,
+                 color = site_code),
+             data = full_table) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, aes(color = NULL)) +
+  guides(color = FALSE)+
+  ggtitle("Beta ~ Beta")
+
+p3 <- ggplot(aes(x = spatial_gamma_q0,
+                 y = temporal_gamma_q0,
+                 color = site_code),
+             data = full_table) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, aes(color = NULL)) +
+  guides(color = FALSE)+
+  ggtitle("Gamma ~ Gamma")
+
+grid.arrange(p1, p2, p3, nrow = 1)
+```
+
+## Q = 2
+
+```{r}
+p1 <- ggplot(aes(x = spatial_alpha_q2,
+                 y = temporal_alpha_q2,
+                 color = site_code),
+             data = full_table) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, aes(color = NULL)) +
+  guides(color = FALSE) +
+  ggtitle("Alpha ~ Gamma")
+
+p2 <- ggplot(aes(x = spatial_beta_q2,
+                 y = temporal_beta_q2,
+                 color = site_code),
+             data = full_table) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, aes(color = NULL)) +
+  guides(color = FALSE)+
+  ggtitle("Beta ~ Gamma")
+
+p3 <- ggplot(aes(x = spatial_gamma_q2,
+                 y = temporal_gamma_q2,
+                 color = site_code),
+             data = full_table) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, aes(color = NULL)) +
+  guides(color = FALSE)+
+  ggtitle("Alpha ~ Beta")
+
+grid.arrange(p1, p2, p3, nrow = 1)
+```
+
+# Model Fitting
+
+```{r}
+mod_beta_spatial = lm(scale(spatial_beta_q0) ~ scale(spatial_gamma_q0) + scale(spatial_mean_biomass) + scale(spatial_cv_biomass) , data = full_table)
+# summary(mod_beta_spatial)
+```
+
+```{r}
+mod_alpha_spatial = lm(scale(spatial_alpha_q0) ~ scale(spatial_gamma_q0) + scale(spatial_mean_biomass) + scale(spatial_cv_biomass), data = full_table)
+# summary(mod_alpha_spatial)
+```
+
+```{r}
+mod_beta_temporal = lm(scale(temporal_beta_q0) ~ scale(temporal_gamma_q0) + scale(temporal_mean_biomass) + scale(temporal_cv_biomass) , data = full_table)
+# summary(mod_beta_temporal)
+```
+
+```{r}
+mod_alpha_temporal = lm(scale(temporal_alpha_q0) ~ scale(temporal_gamma_q0) + scale(temporal_mean_biomass) + scale(temporal_cv_biomass), data = full_table)
+# summary(mod_alpha_temporal)
+```
+
+# Plotting Model Coefficients:
+
+```{r}
+library(sjPlot)
+
+# draw a dot-and-whisker plot
+p1 = plot_model(mod_alpha_spatial) 
+p2 = plot_model(mod_alpha_temporal) 
+p3 = plot_model(mod_beta_spatial)
+p4 = plot_model(mod_beta_temporal)
+
+grid.arrange(p1,p2,p3,p4, nrow = 1)
+
+bind_rows(p1$data,
+          p2$data,
+          p3$data,
+          p4$data) %>%
+  mutate(lev = c(rep("Spatial Plot Richness", nrow(p1$data)), 
+               rep("Temporal Plot Richness", nrow(p2$data)), 
+               rep("Spatial Turnover", nrow(p3$data)), 
+               rep("Temporal Turnover", nrow(p4$data))),
+         alpha_val = as.numeric(if_else(p.value < 0.05, 1, .3))) %>%
+  mutate(term = case_when(grepl("gamma", term) ~ "Total Species Pool",
+            grepl("mean", term) ~ "Total Biomass",
+            grepl("cv", term) ~ "CV of Biomass")) %>%
+  ggplot(aes(x = estimate,
+             y = term,
+             color = estimate > 0,
+             fill = estimate > 0,
+             alpha = I(alpha_val))) + 
+  geom_vline(xintercept = 0) +
+  geom_segment(aes(x = conf.low,
+                 xend = conf.high,
+                 y = term,
+                 yend = term),
+               size = 1) +
+  geom_point(size = 5, pch = 21, color = "black") +
+  facet_wrap(~lev, nrow = 2) +
+  theme_bw() +
+  xlab("Standardized Coefficient Estimate") +
+  ylab("Coefficient Name") +
+  guides(color = FALSE,
+         fill = FALSE) +
+  ggtitle("Model Coefficient Effects")
+```
+
+# Predicting biomass
+
+```{r}
+mean_site_biomass <- plot.descriptions
+
+biomass_model <-  plot.descriptions %>% 
+  filter(year_trt == 0) %>% 
+  group_by(site_code) %>%
+  summarise(spatial_mean_biomass = mean(na.omit(total_mass)),
+            spatial_cv_biomass = sd(na.omit(total_mass)) / mean(na.omit(total_mass)),
+            mean_C = log(mean(na.omit(pct_C))),
+            mean_P = log(mean(na.omit(ppm_P))),
+            mean_N = log(mean(na.omit(pct_N))),
+            mean_K = log(mean(na.omit(ppm_K))),
+            mean_pH = log(mean(na.omit(pH))),
+            managed = unique(managed),
+            burned = unique(burned),
+            grazed = unique(grazed),
+            anthropogenic = unique(anthropogenic),
+            MAP_v2 = unique(MAP_v2),
+            MAT_v2 = unique(MAT_v2)) %>%
+   filter(site_code %in% full_table$site_code)
+
+prodmod <- lm(log(spatial_mean_biomass) ~ mean_C + mean_P + mean_K + mean_N + mean_pH + MAP_v2 + MAT_v2 + managed + burned + grazed + anthropogenic ,
+  data = full_table)
+summary(prodmod)
+
+plot_model(prodmod)$data %>%
+  mutate(alpha_val = as.numeric(if_else(p.value < 0.05, 1, .3))) %>%
+  ggplot(aes(x = estimate,
+             y = term,
+             color = estimate > 0,
+             fill = estimate > 0,
+             alpha = I(alpha_val))) + 
+  geom_vline(xintercept = 0) +
+  geom_segment(aes(x = conf.low,
+                 xend = conf.high,
+                 y = term,
+                 yend = term),
+               size = 1) +
+  geom_point(size = 5, pch = 21, color = "black") +
+  theme_bw() +
+  xlab("Standardized Coefficient Estimate") +
+  ylab("Coefficient Name") +
+  guides(color = FALSE,
+         fill = FALSE) +
+  ggtitle("Estimated Productivity")
+```
 
 
 ```{r}
-full_table %>% select(mean_biomass, cv_biomass, mean_supply, sd_supply, mean_wtrdef, sd_wtrdef) %>% pairs(.)
-```
 
-```{r}
-plot(mean_biomass ~ mean_supply, full_table)
-```
+prodmod <- lm(log(spatial_mean_biomass) ~ scale(mean_C) + scale(mean_P) + scale(mean_K) + scale(mean_N) + scale(mean_pH) + scale(MAP_v2) + scale(MAT_v2) + managed + burned + grazed + anthropogenic ,
+  data = biomass_model)
+plot(prodmod)
+summary(prodmod)
 
-```{r}
-par(mfrow = c(1,2))
-plot(spatial_alpha ~ mean_biomass, full_table)
-plot(spatial_alpha ~ mean_supply, full_table)
+testdat <- plot.descriptions %>% 
+        filter(year_trt == 0) %>% 
+        mutate(
+          site_code = site_code,
+            log_bmass = log(total_mass),
+            mean_C = log(pct_C),
+            mean_P = log(ppm_P),
+            mean_N = log(pct_N),
+            mean_K = log(ppm_K),
+            mean_pH = log(pH))
 
-```
+pred_biomass = predict(prodmod, newdata = testdat)
 
+testdat$pred_biomass = exp(pred_biomass)
 
+biomass_test <- testdat %>% 
+  select(site_code, pred_biomass) %>%
+  group_by(site_code) %>%
+  summarise(test_mean_biomass = mean(na.omit(pred_biomass)),
+            test_cv_biomass = sd(na.omit(pred_biomass)) / mean(na.omit(pred_biomass)))
 
-```{r}
-mod1 <- lmer(spatial_alpha ~ mean_supply + sd_supply + ann_frac + grazed + MAP_v2 + (1|site_code),
-     data = full_table)
+biomass_test <- left_join(biomass_test,full_table)
+cv_test_mod <- lm(log(spatial_cv_biomass) ~ log(test_cv_biomass) + managed + burned + grazed + anthropogenic + scale(MAP_v2) + scale(MAT_v2), data = biomass_test)
 
-mod2 <- lmer(spatial_alpha ~ mean_biomass + cv_biomass + (1|site_code),
-     data = full_table)
+summary(cv_test_mod)
+plot(cv_test)
 
-mod3 <- lmer(temporal_beta ~ mean_biomass + cv_biomass + (1|site_code),
-     data = full_table)
-
-summary(mod2)
-summary(mod3)
+plot_model(cv_test_mod)$data %>%
+  mutate(alpha_val = as.numeric(if_else(p.value < 0.05, 1, .3))) %>%
+  ggplot(aes(x = estimate,
+             y = term,
+             color = estimate > 0,
+             fill = estimate > 0,
+             alpha = I(alpha_val))) + 
+  geom_vline(xintercept = 0) +
+  geom_segment(aes(x = conf.low,
+                 xend = conf.high,
+                 y = term,
+                 yend = term),
+               size = 1) +
+  geom_point(size = 5, pch = 21, color = "black") +
+  theme_bw() +
+  xlab("Standardized Coefficient Estimate") +
+  ylab("Coefficient Name") +
+  guides(color = FALSE,
+         fill = FALSE) +
+  ggtitle("Estimated Productivity")
 ```
 

@@ -250,7 +250,6 @@ mod_alpha = lmer(scale(alpha_q0) ~ ann_frac + mean_N + mean_P + mean_K + MAT_v2 
 mod_beta_spatial = lmer(scale(beta_q0) ~ ann_frac + mean_N + mean_P + mean_K + MAT_v2 + MAP_v2 + (1|site_code/block), data = spatial_model)
 mod_beta_temporal = lmer(scale(beta_q0) ~ ann_frac + mean_N + mean_P + mean_K + MAT_v2 + MAP_v2 + (1|site_code), data = temporal_model)
 
-
 anova(mod_alpha)
 
 library(sjPlot)

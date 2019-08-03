@@ -1,0 +1,23 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library("lavaan")
+library("lavaan.survey")
+```
+
+Re-run models as SEM?
+
+Start with site-level predictors of biomass and variance in biomass
+
+- Precipitation deficit (PET - PTo?) or function of MAP + MAT
+- Soil resources (N, P, K, C, pH)
+- Disturbance + management
+- Invasion history?
+
+Use these to predict site-level biomass, then also estimate variance in productivity by variance in these site-level predictors? How to best link soil resources to biomass?
+
+- Then, link between these other drivers, biomass, and distribution of diversity within each site?
+
