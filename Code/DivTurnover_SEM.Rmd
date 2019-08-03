@@ -21,3 +21,8 @@ Use these to predict site-level biomass, then also estimate variance in producti
 
 - Then, link between these other drivers, biomass, and distribution of diversity within each site?
 
+Plot partial correlations between resource heterogeneity + supply on turnover / diversity?
+
+## Follow with plot of diversity partitioning as a function of difference in productivity
+
+Is beta-diversity driven by changes in nestedness within each sites (species packing?) or turnover (different affinities to competitive environment / soil conditions)

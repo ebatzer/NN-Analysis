@@ -468,10 +468,10 @@ biomass_test <- testdat %>%
             test_cv_biomass = sd(na.omit(pred_biomass)) / mean(na.omit(pred_biomass)))
 
 biomass_test <- left_join(biomass_test,full_table)
-cv_test_mod <- lm(log(spatial_cv_biomass) ~ log(test_cv_biomass) + managed + burned + grazed + anthropogenic + scale(MAP_v2) + scale(MAT_v2), data = biomass_test)
+cv_test_mod <- lm(scale(log(spatial_cv_biomass)) ~ scale(log(test_cv_biomass)) + managed + burned + grazed + anthropogenic + scale(MAP_v2) + scale(MAT_v2), data = biomass_test)
 
 summary(cv_test_mod)
-plot(cv_test)
+plot(cv_test_mod)
 
 plot_model(cv_test_mod)$data %>%
   mutate(alpha_val = as.numeric(if_else(p.value < 0.05, 1, .3))) %>%
