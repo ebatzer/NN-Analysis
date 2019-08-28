@@ -39,27 +39,22 @@ library(JostDiv) # Exponentiated diversity indices (Hill Numbers)
 
 ```{r}
 # Biomass data
-biomass_data <- fread("../Data/comb-by-plot-22-February-2019.csv",
+biomass_data <- fread("../Data/comb-by-plot-02-August-2019.csv",
                   stringsAsFactors = FALSE,
                   na.strings = c('NA','NULL'))
 
 # Loading in dataset (Updated to Feb 22st 2019)
-cover <- fread('../Data/full-cover-22-February-2019.csv',
+cover <- fread('../Data/full-cover-02-August-2019.csv',
                   stringsAsFactors = FALSE,
                   na.strings = c('NA','NULL'))
 
 # Plot descriptions
-plot.descriptions <-  read.csv("../Data/comb-by-plot-clim-soil-diversity-22-Feb-2019.csv",
+plot.descriptions <-  read.csv("../Data/comb-by-plot-clim-soil-diversity-02-Aug-2019.csv",
                               stringsAsFactors = FALSE)
 
 # Soil characteristics
-soil.chars <- read.csv("../Data/soil-nutrients-21-February-2019.csv",
+soil.chars <- read.csv("../Data/soil-nutrients-22-February-2019.csv",
                               stringsAsFactors = FALSE)
-
-# Site covariates
-site.covars <- read.csv("../Data/site_covars.csv",
-                        stringsAsFactors = FALSE)
-
 ```
 
 ### Filtering
@@ -329,5 +324,55 @@ full_join(df1, df2) %>%
   geom_line(stat = "smooth",
             method = "lm", se = FALSE, alpha = .2) +
   ylim(1,2.5)
+```
+
+# Pairwise dissimilarity metrics
+
+```{r}
+library(betapart)
+
+com_spatial <- cover %>% 
+  filter(year_trt == 0) %>%
+  filter(site_code %in% sitevec) %>% 
+  filter(live == 1)
+
+cover.wide <- data.frame(com_spatial) %>%
+  select(site_code, block, plot, Taxon, max_cover) %>%
+  dcast(site_code+block+plot ~ Taxon,
+                    value.var='max_cover', 
+                    fun.aggregate = sum,drop=T,fill=0)
+
+spatial_turnover <- cover.wide %>% 
+  select(-block, -plot, -site_code) %>%
+  mutate_all(as.numeric)
+
+spatial_turnover[spatial_turnover > 0] = 1
+head(spatial_turnover)
+
+com.list <- split(spatial_turnover , cover.wide$site_code)
+
+betadiv <- lapply(com.list, beta.pair, index.family = "jaccard")
+
+names(betadiv)
+output <- list()
+for(i in 1:length(betadiv)){
+  
+  mat <- as.matrix(betadiv[[i]]$beta.jtu)
+  jtu <- t(combn(colnames(mat), 2))
+  
+  mat <- as.matrix(betadiv[[i]]$beta.jne)
+  jne <- t(combn(colnames(mat), 2))
+  
+  mat <- as.matrix(betadiv[[i]]$beta.jac)
+  jac <- t(combn(colnames(mat), 2))
+  
+  output[[i]] <- bind_cols(
+    data.frame(jac, dist=mat[jac], site = names(betadiv)[i]) %>% rename("Jac" = "dist"),
+    data.frame(jtu, dist=mat[jtu], site = names(betadiv)[i]) %>% rename("Jtu" = "dist") %>% select(Jtu),
+    data.frame(jne, dist=mat[jne], site = names(betadiv)[i]) %>% rename("Jne" = "dist") %>% select(Jne))
+}
+
+bind_rows(output)
+lapply(unique(cover.wide$site_code), beta.pair)
 ```
 

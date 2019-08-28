@@ -1,0 +1,111 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+# Loading packages
+
+```{r, message = FALSE, echo = FALSE}
+library(ggplot2) # Figure plotting
+library(tidyverse) # Data manipulation
+library(lme4) # Linear mixed effects models
+library(vegan) # General ecology functions
+library(data.table) # Fast reading of data tables
+library(testthat) # Unit testing
+library(dtplyr) # Data.table dplyr functions
+library(JostDiv) # Exponentiated diversity indices (Hill Numbers)
+library(gridExtra) # Multiple GGplots
+library(corrplot) # Correlation plots
+library(sjPlot) # Model coefficient plotting
+
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                      fig.width = 8.5, fig.height = 5)
+```
+
+# Reading in Datasets
+
+```{r}
+# Explanatory variables
+explanatory_var <- read.csv("../Data/divturnover_explanatory.csv",
+                           stringsAsFactors = FALSE,
+                           na.strings = c('NA','NULL'))
+
+# Temporal diversity
+temporal_div <- read.csv("../Data/diversity_temporal_full.csv",
+                           stringsAsFactors = FALSE,
+                           na.strings = c('NA','NULL'))
+
+# diversity
+spatial_div <- read.csv("../Data/diversity_spatial_full.csv",
+                           stringsAsFactors = FALSE,
+                           na.strings = c('NA','NULL'))
+
+# General plot descriptions
+plot.descriptions <- read.csv("../data/comb-by-plot-clim-soil-diversity-02-Aug-2019.csv",
+                           stringsAsFactors = FALSE,
+                           na.strings = c('NA','NULL'))
+
+```
+
+# Assembling dataset for full model
+
+```{r}
+full_table <- spatial_div %>% 
+  select(site_code, alpha_q0, beta_q0,gamma_q0, alpha_q2, beta_q2, gamma_q2, plot) %>% 
+  group_by(site_code) %>%
+  summarise(beta_q0 = mean(beta_q0),
+            alpha_q0 = mean(alpha_q0),
+            gamma_q0 = mean(gamma_q0),
+            beta_q2 = mean(beta_q2),
+            alpha_q2 = mean(alpha_q2),
+            gamma_q2 = mean(gamma_q2)) %>%
+  rename("spatial_beta_q0" = "beta_q0",
+         "spatial_alpha_q0" = "alpha_q0",
+         "spatial_gamma_q0" = "gamma_q0",
+         "spatial_beta_q2" = "beta_q2",
+         "spatial_alpha_q2" = "alpha_q2",
+         "spatial_gamma_q2" = "gamma_q2") %>%
+  full_join(temporal_div %>%
+              select(site_code, alpha_q0, beta_q0,gamma_q0, alpha_q2, beta_q2, gamma_q2, plot) %>% 
+              group_by(site_code) %>%
+              summarise(beta_q0 = mean(beta_q0),
+                        alpha_q0 = mean(alpha_q0),
+                        gamma_q0 = mean(gamma_q0),
+                        beta_q2 = mean(beta_q2),
+                        alpha_q2 = mean(alpha_q2),
+                        gamma_q2 = mean(gamma_q2)) %>%
+              rename("temporal_beta_q0" = "beta_q0",
+                     "temporal_alpha_q0" = "alpha_q0",
+                     "temporal_gamma_q0" = "gamma_q0",
+                     "temporal_beta_q2" = "beta_q2",
+                     "temporal_alpha_q2" = "alpha_q2",
+                     "temporal_gamma_q2" = "gamma_q2")) %>%
+  left_join(explanatory_var) %>% select(-X)
+
+biomass_summary_spatial <- plot.descriptions %>% 
+  filter(year_trt == 0) %>% 
+  select(site_code, total_mass) %>%
+  group_by(site_code) %>%
+  summarise(spatial_mean_biomass = mean(na.omit(total_mass)),
+            spatial_cv_biomass = sd(na.omit(total_mass)) / mean(na.omit(total_mass)))
+
+biomass_summary_temporal <- plot.descriptions %>% 
+  filter(year_trt < 5 & trt == "Control" & !is.na(first_nutrient_year)) %>% 
+  select(site_code, plot, total_mass) %>%
+  group_by(site_code, plot) %>%
+  summarise(temporal_mean_biomass = mean(na.omit(total_mass)),
+            temporal_cv_biomass = sd(na.omit(total_mass)) / mean(na.omit(total_mass))) %>%
+  filter(!is.na(temporal_cv_biomass))
+  # summarise(temporal_mean_biomass = mean(temporal_mean_biomass),
+  #          temporal_cv_biomass =  mean(temporal_cv_biomass))
+ 
+full_table <- full_table %>% left_join(biomass_summary_spatial) %>% left_join(biomass_summary_temporal)
+```
+
+
+```{r}
+plot(full_tab)
+```
+
+

@@ -14,6 +14,8 @@ library(testthat) # Unit testing
 library(fastDummies) # Fast generation of dummy variables
 library(dtplyr) #Dplyr for data.table
 library(RRPP) # RRPP for multivariate model fittinginsta
+library(gridExtra)
+library(grid)
 ```
 
 # Reading in dataframes
@@ -49,10 +51,10 @@ cover.mat = cover.vals
 attr.mat = dummy_columns(attr.mat, select_columns = "trt", 
                            remove_first_dummy = TRUE) %>%
   replace_na(list(trt_K = 0, trt_N = 0, trt_P = 0)) %>%
-  mutate(trt_K_num = as.numeric(trt_K * year_trt),
-         trt_P_num = as.numeric(trt_P * year_trt),
-         trt_N_num = as.numeric(trt_N * year_trt),
-         year_trt = as.numeric(year_trt))
+  mutate(trt_K_num =log(as.numeric(trt_K * year_trt) + 1),
+         trt_P_num =log(as.numeric(trt_P * year_trt) + 1),
+         trt_N_num =log(as.numeric(trt_N * year_trt) + 1),
+         year_trt = log(as.numeric(year_trt) + 1))
 
 # Setting treatment effects to zero for the first year of treatment
 attr.mat$trt_K[attr.mat$year_trt == 0] = 0
@@ -93,10 +95,10 @@ for(sites in sitenames){
   expect_true(nrow(attr.subset) == nrow(com.subset))
   expect_true(nrow(attr.subset) > 0)
   
-  mod_rrpp <- lm.rrpp(com.subset ~ year_trt + trt_K_num + trt_P_num + trt_N_num + block,
+  mod_rrpp <- lm.rrpp(log(com.subset + 1) ~ year_trt + trt_K_num + trt_P_num + trt_N_num + block,
                       data = attr.subset, 
                       SS.type = "III", 
-                      iter = 9999, 
+                      iter = 999, 
                       print.progress = FALSE)
   
   # Saving ouput
@@ -216,3 +218,66 @@ dot_full = left_join(site_pvals %>% select(-Total, -Residuals), dotoutput) %>%
 # Write final data product
 write.csv(x = dot_full, "../Data/dot_full.csv")
 ```
+
+```{r, fig.height = 7, fig.width = 7}
+dot_full <- read.csv("../Data/dot_full.csv")
+
+p1 = dot_full %>% # filter(trt_N < .05 & trt_P < .05) %>%
+  ggplot(aes(x = NP,
+             fill = trt_N < 0.05 & trt_P < .05)) +
+  geom_histogram(color = "black", position = position_dodge()) + 
+  xlim(-1, 1) +
+  ggtitle("NP Correlation") +
+  guides(fill = FALSE)
+
+p2 = dot_full %>% # filter(trt_N < .05 & trt_K < .05) %>%
+  ggplot(aes(x = NK,
+             fill = trt_N < 0.05 & trt_K < .05)) +
+  geom_histogram(color = "black", position = position_dodge()) + 
+  xlim(-1, 1) +
+  ggtitle("NK Correlation")+
+  guides(fill = FALSE)
+
+p3 = dot_full %>% # filter(trt_K < .05 & trt_P < .05) %>%
+  ggplot(aes(x = PK,
+             fill = trt_K < 0.05 & trt_P < .05)) +
+  geom_histogram(color = "black", position = position_dodge()) + 
+  xlim(-1, 1) +
+  ggtitle("PK Correlation")+
+  guides(fill = FALSE)
+
+grid.arrange(p1,p2,p3,
+             top = textGrob("Site Response Correlations",gp=gpar(fontsize=20,font=3)),
+             nrow = 2)
+```
+
+```{r}
+sigtally <- site_pvals %>% select(trt_N_num, trt_P_num, trt_K_num) %>%
+  mutate_all(function(x) x < 0.05) %>%
+  mutate(NP = trt_N_num == 1 & trt_P_num == 1,
+         NK = trt_N_num == 1 & trt_K_num == 1,
+         PK = trt_P_num == 1 & trt_K_num == 1,
+         NPK = trt_N_num == 1 & trt_P_num == 1 & trt_K_num == 1)  %>%
+  mutate_all(as.numeric) %>%
+  rename("K" = "trt_K_num",
+         "N" = "trt_N_num",
+         "P" = "trt_P_num") %>%
+  summarise_all(sum) %>%
+  gather()
+
+sigtally$key = factor(sigtally$key, levels = sigtally$key)
+
+sigtally %>% ggplot(aes(x = key, 
+                        y = value / nrow(site_pvals),
+                        fill = key)) +
+  geom_bar(aes(y = 1), stat = "identity", fill = "white", color = "black") +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_manual(values = c("cadetblue", "cadetblue1", "cadetblue4", "gold", "gold3", "gold4", "brown1")) +
+  ylim(0, 1) +
+  ylab("Proportion of Sites where P < 0.05") +
+  xlab("Coefficient")
+
+
+
+```
+

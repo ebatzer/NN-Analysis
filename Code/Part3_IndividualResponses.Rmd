@@ -38,26 +38,26 @@ library(tidyverse);library(data.table);library(dtplyr); library(gridExtra); libr
 
 ttable <- fread("../Data/tuningtable.csv")
 
-specscores_full <- read.csv("../Data/specscores.csv")
+specscores_full <- read.csv("../Data/tradeoffs_specscores.csv")
 
 # taxonomy <- fread('C:/Users/ebatz/Dropbox/NutNet Data/Nutnet-site-taxonomy.csv',
 #                stringsAsFactors = FALSE,
 #                na.strings = c('NA','NULL'))
 
-cover <- fread('C:/Users/ebatzer/Dropbox/NutNet Data/full-cover-22-February-2019.csv')
+cover <- fread('../Data/full-cover-02-August-2019.csv')
 
 taxonomy = cover %>% group_by(site_code, Taxon) %>%
+  filter(!is.null(Family)) %>%
   summarise(ps_path = unique(ps_path),
-            local_lifespan = unique(local_lifespan),
             functional_group = unique(functional_group),
             N_fixer = unique(N_fixer))
 
-site.covars <- read.csv("../Data/site_covars.csv")
+#site.covars <- read.csv("../Data/site_covars.csv")
 
-site_pvals = read.csv("composition_pvalues.csv", header = TRUE, stringsAsFactors = FALSE)
+site_pvals = read.csv("../Data/tradeoffs_RRPP_Pvals.csv", header = TRUE, stringsAsFactors = FALSE)
 site_pvals = site_pvals %>% rename(site.K = trt_K_num, site.N = trt_N_num, site.P = trt_P_num)
 
-dot_full = read.csv("../data/dot_full.csv")
+dot_full = read.csv("../Data/dot_full.csv")
 
 library(gridExtra)
 ```

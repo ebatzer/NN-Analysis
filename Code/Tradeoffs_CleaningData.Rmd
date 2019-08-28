@@ -1,0 +1,151 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r}
+# Biomass data
+biomass_data <- fread("../Data/comb-by-plot-02-August-2019.csv",
+                  stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+
+# Loading in dataset (Updated to Feb 22st 2019)
+cover <- fread('../Data/full-cover-02-August-2019.csv',
+                  stringsAsFactors = FALSE,
+                  na.strings = c('NA','NULL'))
+
+# Plot descriptions
+plot.descriptions <-  read.csv("../Data/comb-by-plot-clim-soil-diversity-02-Aug-2019.csv",
+                              stringsAsFactors = FALSE)
+
+# Soil characteristics
+soil.chars <- read.csv("../Data/soil-nutrients-22-February-2019.csv",
+                              stringsAsFactors = FALSE)
+
+# Site covariates
+# site.covars <- read.csv("../Data/site_covars.csv",
+#                        stringsAsFactors = FALSE)
+
+```
+
+#### Cleaning datasets
+
+(Code omitted)
+
+```{r}
+# Converting some columns to factor prior to joining
+biomass_data$site_code <- factor(biomass_data$site_code)
+biomass_data$trt <- factor(biomass_data$trt)
+
+#Choose sites with at least 3 years of data
+sites <- biomass_data %>% 
+  group_by(site_code,region,first_nutrient_year) %>% 
+  summarise(yrs.data = length(unique(year)),fyear = min(year), lyear = max(year)) %>% 
+  arrange(yrs.data)
+
+sites.long <- as.character(sites[yrs.data >= 3,`site_code`])
+
+bmass <- biomass_data[site_code %in% sites.long]
+
+cover.long <- cover[site_code%in%c(sites.long) & live==1,]
+# cover.long <- left_join(cover.long,distinct(bmass[,.(`site_code`,`region`)]))
+cover.long$max_cover = as.numeric(cover.long$max_cover)
+
+rm(sites)
+
+```
+
+```{r}
+#Choosing only our treatments of interest
+cover.long <- cover.long[trt %in% c('Control','N','P','K')]
+
+#Clean out unknowns, non-vascular plants
+sps <- unique(cover.long$Taxon)
+unwanted.sps <- sps[c(grep('UNKNOWN',sps),grep('BRYOPHYTE',sps),grep('LICHEN',sps))]
+cover.long <- cover.long[!(Taxon %in% unwanted.sps | local_lifeform == 'MOSS' | functional_group == 'BRYOPHYTE')]
+cover.long[functional_group=='GRAMINOID', functional_group := 'GRASS']
+rm(sps,unwanted.sps)
+rm(sps,unwanted.sps)
+
+#Choose plots with at least 3 years of data
+## This takes care of a few sites that have strange plot configurations,
+## like sgs.us
+site.plots.keep <- cover.long %>% 
+  group_by(site_code,block,plot,trt) %>% 
+  summarise(yrs.data = length(unique(year))) %>% 
+  filter(yrs.data>= 5)
+
+## Some sites have multiple control plots in a block.
+## Choosing only the lowest numbered plot belong to a treatment in each block.
+site.plots.keep <- left_join(site.plots.keep,
+                             site.plots.keep %>% group_by(site_code,block,trt) %>% 
+                               summarize(min.plot = min(plot))) %>% 
+  filter(plot==min.plot) %>% 
+  select(-min.plot,-yrs.data)
+
+cover.long <- left_join(site.plots.keep,cover.long)
+
+cover.long <- droplevels(cover.long) #cover.long$site_code <- factor(cover.long$site_code)
+rm(site.plots.keep)
+
+# cast long into wide
+cover.wide <- dcast(cover.long,site_code+year+block+plot+trt+year_trt ~ Taxon,
+                    value.var='max_cover', 
+                    fun.aggregate = sum,drop=T,fill=0)
+```
+
+
+```{r}
+# Adding in additional info
+siteinfo <- biomass_data[site_code %in% sites.long, 
+                         .(`site_code`,`site_name`,`continent`,`region`,
+                           `first_nutrient_year`,`site_richness`)] %>% 
+  distinct()
+
+spsinfo <- select(data.frame(cover.long),site_code,Family:ps_path,-live) %>% distinct()
+
+```
+
+
+```{r}
+#Choosing only our treatments of interest
+cover.long <- cover.long[trt %in% c('Control','N','P','K')]
+
+#Clean out unknowns, non-vascular plants
+sps <- unique(cover.long$Taxon)
+unwanted.sps <- sps[c(grep('UNKNOWN',sps),grep('BRYOPHYTE',sps),grep('LICHEN',sps))]
+cover.long <- cover.long[!(Taxon %in% unwanted.sps | local_lifeform == 'MOSS' | functional_group == 'BRYOPHYTE')]
+cover.long[functional_group=='GRAMINOID', functional_group := 'GRASS']
+rm(sps,unwanted.sps)
+rm(sps,unwanted.sps)
+
+#Choose plots with at least 3 years of data
+## This takes care of a few sites that have strange plot configurations,
+## like sgs.us
+site.plots.keep <- cover.long %>% 
+  group_by(site_code,block,plot,trt) %>% 
+  summarise(yrs.data = length(unique(year))) %>% 
+  filter(yrs.data>= 5)
+
+## Some sites have multiple control plots in a block.
+## Choosing only the lowest numbered plot belong to a treatment in each block.
+site.plots.keep <- left_join(site.plots.keep,
+                             site.plots.keep %>% group_by(site_code,block,trt) %>% 
+                               summarize(min.plot = min(plot))) %>% 
+  filter(plot==min.plot) %>% 
+  select(-min.plot,-yrs.data)
+
+cover.long <- left_join(site.plots.keep,cover.long)
+
+cover.long <- droplevels(cover.long) #cover.long$site_code <- factor(cover.long$site_code)
+rm(site.plots.keep)
+
+# cast long into wide
+cover.wide <- dcast(cover.long,site_code+year+block+plot+trt+year_trt ~ Taxon,
+                    value.var='max_cover', 
+                    fun.aggregate = sum,drop=T,fill=0)
+
+write.csv(x = cover.wide, "../Data/cover_wide_tradeoffs.csv")
+```

@@ -4,8 +4,19 @@ output: html_notebook
 ---
 
 ```{r}
-library("lavaan")
+library(lavaan)
 library("lavaan.survey")
+library(ggplot2) # Figure plotting
+library(tidyverse) # Data manipulation
+library(lme4) # Linear mixed effects models
+library(vegan) # General ecology functions
+library(data.table) # Fast reading of data tables
+library(testthat) # Unit testing
+library(dtplyr) # Data.table dplyr functions
+library(JostDiv) # Exponentiated diversity indices (Hill Numbers)
+library(gridExtra) # Multiple GGplots
+library(corrplot) # Correlation plots
+library(sjPlot) # Model coefficient plotting
 ```
 
 Re-run models as SEM?
@@ -26,3 +37,192 @@ Plot partial correlations between resource heterogeneity + supply on turnover / 
 ## Follow with plot of diversity partitioning as a function of difference in productivity
 
 Is beta-diversity driven by changes in nestedness within each sites (species packing?) or turnover (different affinities to competitive environment / soil conditions)
+
+## Variable definitions
+
+### Spatial Dataset
+
+* biomass ~ precipitation (MAT / MAT / PET - PTo) + mean soil resource supply + other factors
+* spatial heterogeneity in productivity ~ some function of within-site soil resource heterogeniety + other factors
+* total species pool ~ function of both biomass, heterogeneity, and other factors
+* Representation in an individual plot ~ function of total species pool biomass, heterogeneity, and other factors
+
+### Creating spatial dataset
+
+```{r}
+# Explanatory variables
+explanatory_var <- read.csv("../Data/divturnover_explanatory.csv",
+                           stringsAsFactors = FALSE,
+                           na.strings = c('NA','NULL'))
+
+# Temporal diversity
+temporal_div <- read.csv("../Data/diversity_temporal_full.csv",
+                           stringsAsFactors = FALSE,
+                           na.strings = c('NA','NULL'))
+
+# diversity
+spatial_div <- read.csv("../Data/diversity_spatial_full.csv",
+                           stringsAsFactors = FALSE,
+                           na.strings = c('NA','NULL'))
+
+# General plot descriptions
+plot.descriptions <- read.csv("../data/comb-by-plot-clim-soil-diversity-02-Aug-2019.csv",
+                           stringsAsFactors = FALSE,
+                           na.strings = c('NA','NULL'))
+
+```
+
+```{r}
+temporal_table <- temporal_div %>% 
+  select(site_code, alpha_q0, beta_q0, gamma_q0) %>% 
+  group_by(site_code) %>%
+  summarise(beta_q0 = mean(beta_q0),
+            alpha_q0 = mean(alpha_q0),
+            gamma_q0 = mean(gamma_q0)) %>%
+  rename("temporal_beta_q0" = "beta_q0",
+         "temporal_alpha_q0" = "alpha_q0",
+         "temporal_gamma_q0" = "gamma_q0")
+
+spatial_table <- spatial_div %>% 
+  select(site_code, alpha_q0, beta_q0, gamma_q0) %>% 
+  group_by(site_code) %>%
+  summarise(beta_q0 = mean(beta_q0),
+            alpha_q0 = mean(alpha_q0),
+            gamma_q0 = mean(gamma_q0)) %>%
+  rename("spatial_beta_q0" = "beta_q0",
+         "spatial_alpha_q0" = "alpha_q0",
+         "spatial_gamma_q0" = "gamma_q0") %>%
+  left_join(explanatory_var) %>% select(-X)
+
+biomass_summary_spatial <- plot.descriptions %>% 
+  filter(year_trt == 0) %>% 
+  select(site_code, total_mass) %>%
+  group_by(site_code) %>%
+  summarise(spatial_mean_biomass = mean(na.omit(total_mass)),
+            spatial_cv_biomass = sd(na.omit(total_mass)) / mean(na.omit(total_mass)))
+
+biomass_summary_temporal <- plot.descriptions %>% 
+  filter(year_trt < 5 & trt == "Control" & !is.na(first_nutrient_year)) %>%
+  select(site_code, total_mass) %>%
+  group_by(site_code) %>%
+  summarise(temporal_mean_biomass = mean(na.omit(total_mass)),
+            temporal_cv_biomass = sd(na.omit(total_mass)) / mean(na.omit(total_mass))) %>%
+  filter(!is.na(temporal_cv_biomass))
+  # summarise(temporal_mean_biomass = mean(temporal_mean_biomass),
+  #          temporal_cv_biomass =  mean(temporal_cv_biomass))
+ 
+spatial_table <- spatial_table %>% left_join(biomass_summary_spatial) %>% left_join(biomass_summary_temporal) %>% left_join(temporal_table)
+```
+
+```{r}
+spatial_table %>% ggplot(aes(x = log(spatial_alpha_q0),
+                             y = log(spatial_gamma_q0))) +
+  geom_point() + 
+  stat_smooth(method = "lm", se = FALSE) +
+  xlab("Spatial Gamma Diversity (log scale)") +
+  ylab("Spatial Alpha Diversity (log scale)")
+
+spatial_table$gamma_resid <- resid(lm(log(spatial_gamma_q0) ~ log(spatial_alpha_q0), data = spatial_table))
+
+gamma_resids <- spatial_table %>% ggplot(aes(x = spatial_cv_biomass,
+                             y = scale(gamma_resid))) +
+  geom_point() + 
+  stat_smooth(method = "lm", se = FALSE) +
+  xlab("Spatial Biomass Heterogeneity") +
+  ylab("Spatial Beta Diversity")
+
+spatial_table %>% ggplot(aes(x = spatial_cv_biomass,
+                             y = scale(log(spatial_beta_q0)))) +
+  geom_point() + 
+  stat_smooth(method = "lm", se = FALSE) +
+  xlab("Spatial Biomass Heterogeneity") +
+  ylab("Spatial Beta Diversity")
+```
+```{r}
+
+spatial_table$gamma_resid <- resid(lm(log(temporal_gamma_q0) ~ log(temporal_alpha_q0), data = spatial_table))
+
+gamma_resids <- spatial_table %>% ggplot(aes(x = temporal_cv_biomass,
+                             y = scale(gamma_resid))) +
+  geom_point() + 
+  stat_smooth(method = "lm", se = FALSE) +
+  xlab("Spatial Biomass Heterogeneity") +
+  ylab("Spatial Beta Diversity")
+
+log_beta <- spatial_table %>% ggplot(aes(x = temporal_cv_biomass,
+                             y = scale(log(spatial_beta_q0)))) +
+  geom_point() + 
+  stat_smooth(method = "lm", se = FALSE) +
+  xlab("Spatial Biomass Heterogeneity") +
+  ylab("Spatial Beta Diversity")
+grid.arrange(gamma_resids, log_beta, nrow = 1)
+```
+```{r}
+spatial_table
+```
+
+```{r}
+# Create data object and rename variables for clarity
+site.sem.dat <- data.frame()
+site.sem.dat<- spatial_table$SiteCode
+
+# Richness
+site.sem.dat$SiteRich <- log(spatial_table$spatial_gamma_q0)
+site.sem.dat$PlotRich <- log(spatial_table$spatial_alpha_q0)
+  
+# Soil resources (means are log-transformed)
+site.sem.dat$mean_N <- spatial_table$mean_N
+site.sem.dat$mean_C <- spatial_table$mean_C
+site.sem.dat$mean_P <- spatial_table$mean_P
+site.sem.dat$mean_K <- spatial_table$mean_K
+site.sem.dat$mean_ph <- spatial_table$mean_pH
+
+# Heterogeneity in soil resources
+site.sem.dat$var_N <- spatial_table$cv_N
+site.sem.dat$var_C <- spatial_table$cv_C
+site.sem.dat$var_P <- spatial_table$cv_P
+site.sem.dat$var_K <- spatial_table$cv_K
+site.sem.dat$var_ph <- spatial_table$sd_pH
+
+# Climate
+site.sem.dat$MAP  <- log(spatial_table$MAP_v2)
+site.sem.dat$MAT <- spatial_table$MAT_v2
+
+# Biomass and Site Covariates
+site.sem.dat$SiteBiomass <- log(spatial_table$spatial_mean_biomass)
+site.sem.dat$SpatialHet <- spatial_table$spatial_cv_biomass
+site.sem.dat$AnthroDisturbance <- spatial_table$anthropogenic #anthropogenic disturbance
+site.sem.dat$Grazing <- spatial_table$grazed
+
+names(site.sem.dat)
+typeof(as.data.frame(site.sem.dat))
+
+sitemod <- '# Latent variables
+            SoilResources =~ mean_N + mean_P + mean_K 
+            SoilHeterogeneity =~ var_N + var_P + var_K
+
+            # Regressions
+            SiteBiomass ~ SoilResources + MAP + Grazing + AnthroDisturbance
+            SpatialHet ~ SoilHeterogeneity + Grazing + AnthroDisturbance
+            SiteRich ~ SiteBiomass + SpatialHet + Grazing + AnthroDisturbance
+            PlotRich ~ SiteRich + SpatialHet + SoilHeterogeneity
+
+            # Residual Covariances
+            SoilResources ~~ SoilHeterogeneity
+            mean_N ~~ SpatialHet
+            '
+
+sitemod.fit <- sem(sitemod, data=as.data.frame(site.sem.dat), fixed.x=FALSE, meanstructure = TRUE)  # run model
+```
+
+```{r}
+summary(sitemod.fit, fit.measures = TRUE)
+
+standardizedSolution(sitemod.fit) %>% filter(pvalue < 0.10)
+```
+
+
+```{r}
+semPlot::semPlotModel(sitemod.fit)
+```
+

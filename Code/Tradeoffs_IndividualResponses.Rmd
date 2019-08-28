@@ -1,0 +1,218 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Individual Responses
+
+To better understand why certain sites express correlations in their N, P, and K 
+response trajectories, we can look at the individual responses of species that
+constitute these community-level effects.
+
+From existing work on nutrient enrichment (both in NutNet and other meta-analysis), 
+there are a number of patterns that might be expected:
+
+* Dominant species respond more positively to nutrient enrichment than non-dominants
+* Certain functional groups (e.g. legumes) are likely to respond to P, K enrichment over others
+
+These relationships may also give us more clues on what sort of site-level covariates
+might be interested.
+
+Here, I've taken the individual coefficients estimated from part 2 and plotted them
+vs. a series of potential individual-level covariates. I've highlighted relationships
+between dominance and functional group here, but a bunch more exploration is possible.
+
+In the process of calculating these, I've produced a "tuning table" that has a number
+of features that can also be used to subset the dataset prior to conducting these analyses:
+
+* Pretrt presence / absence and cover
+* Total observations over the course of sampling
+* Pretrt dominance and control dominance (abundance / total observed cover)
+
+```{r, message = FALSE, echo = FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+library(tidyverse);library(data.table);library(dtplyr); library(gridExtra); library(grid)
+
+ttable <- fread("../Data/tuningtable.csv")
+
+specscores_full <- read.csv("../Data/tradeoffs_specscores.csv")
+
+specscores_long <- specscores_full %>% 
+  select(-X) %>% 
+  gather(key = "Taxon", value = "Coef", - site, - trt) %>%
+  mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
+  mutate(Taxon = str_trim(Taxon)) %>%
+  rename("site_code" = "site")
+
+# taxonomy <- fread('C:/Users/ebatz/Dropbox/NutNet Data/Nutnet-site-taxonomy.csv',
+#                stringsAsFactors = FALSE,
+#                na.strings = c('NA','NULL'))
+
+cover <- fread('../Data/full-cover-02-August-2019.csv')
+
+taxonomy <- cover %>% group_by(site_code, Taxon) %>%
+  filter(!is.null(Family)) %>%
+  summarise(ps_path = unique(ps_path),
+            functional_group = unique(functional_group),
+            N_fixer = unique(N_fixer)) %>%
+  mutate(functional_group = case_when(functional_group == "GRAMINOID" ~ "Graminoid",
+                                      functional_group == "GRASS" ~ "Graminoid",
+                                      functional_group == "LEGUME" ~ "Legume",
+                                      functional_group == "WOODY" ~ "Woody",
+                                      functional_group == "FORB" ~ "Forb")) %>%
+  mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
+  mutate(Taxon = str_trim(Taxon))
+
+#site.covars <- read.csv("../Data/site_covars.csv")
+
+site_pvals = read.csv("../Data/tradeoffs_RRPP_Pvals.csv", header = TRUE, stringsAsFactors = FALSE)
+site_pvals = site_pvals %>% rename(site.K = trt_K_num, site.N = trt_N_num, site.P = trt_P_num)
+
+dot_full = read.csv("../Data/dot_full.csv")
+
+library(gridExtra)
+```
+
+```{r}
+full_responses = specscores_long %>% inner_join(taxonomy) %>% filter(!is.na(functional_group))
+```
+
+# Plotting relationships
+
+Across all three fertilization treatment pairs (N-P, N-K, and P-K), responses
+seem to be quite correlated. I've only showed correlations between the response
+to N enrichment (trt_N) and P enrichment (trt_P):
+
+```{r}
+full_responses %>% 
+  spread(key = trt, value = Coef) %>%
+  ggplot(aes(x = trt_N, y = trt_P)) +
+  geom_point(aes(color = functional_group), alpha = .4) +
+  stat_smooth(method = "lm", se = FALSE) +
+  ggtitle("All Responses") +
+  xlab("Beta_N") +
+  ylab("Beta_P")
+
+full_responses %>% 
+  spread(key = trt, value = Coef) %>%
+  ggplot(aes(x = trt_N, y = trt_K)) +
+  geom_point(aes(color = functional_group), alpha = .4) +
+  stat_smooth(method = "lm", se = FALSE) +
+  ggtitle("All Responses") +
+  xlab("Beta_N") +
+  ylab("Beta_K")
+
+full_responses %>% 
+  spread(key = trt, value = Coef) %>%
+  ggplot(aes(x = trt_P, y = trt_K)) +
+  geom_point(aes(color = functional_group), alpha = .4) +
+  stat_smooth(method = "lm", se = FALSE) +
+  ggtitle("All Responses") +
+  xlab("Beta_P") +
+  ylab("Beta_K")
+```
+
+# Fitting with SMAs
+
+```{r}
+library(smatr)
+
+smadat <- full_responses %>%
+  spread(key = "trt", value = "Coef")
+
+smafit <- sma(trt_P ~ trt_N * functional_group, smadat)
+summary(smafit)
+
+smafit$groupsummary %>%
+  ggplot(aes(color = functional_group,
+             slope = Slope,
+             intercept = Int)) +
+  geom_abline(aes(slope = Slope,
+             intercept = Int,
+             color = group), 
+             data = smafit$groupsummary,
+             size = 2) +
+  xlim(-2, 2) +
+  ylim(-2, 2) +
+  xlab("N Response") +
+  ylab("P Response")
+
+smafit <- sma(trt_K ~ trt_N * functional_group, smadat)
+
+smafit$groupsummary %>%
+  ggplot(aes(color = functional_group,
+             slope = Slope,
+             intercept = Int)) +
+  geom_abline(aes(slope = Slope,
+             intercept = Int,
+             color = group), 
+             data = smafit$groupsummary,
+             size = 2) +
+  xlim(-2, 2) +
+  ylim(-2, 2) +
+  xlab("N Response") +
+  ylab("K Response")
+
+smafit <- sma(trt_K ~ trt_P * functional_group, smadat)
+summary(smafit)
+
+smafit$groupsummary %>%
+  ggplot(aes(color = functional_group,
+             slope = Slope,
+             intercept = Int)) +
+  geom_abline(aes(slope = Slope,
+             intercept = Int,
+             color = group), 
+             data = smafit$groupsummary,
+             size = 2) +
+  xlim(-2, 2) +
+  ylim(-2, 2) +
+  xlab("P Response") +
+  ylab("K Response")
+```
+
+# Conducting a PCA
+
+```{r}
+pc <- prcomp(smadat %>% select(trt_N, trt_K, trt_P))
+pc$sdev[1] / sum(pc$sdev)
+pcsummary <- summary(pc)$importance[2,]
+data.frame(pcsummary) %>% 
+  ggplot(aes(x = c("PC1", "PC2", "PC3"),
+             y = pcsummary)) +
+  geom_bar(stat = "identity", fill = "white", color = "black") +
+  ylab("Proportion of Variance") +
+  xlab("Principal Component") +
+  ggtitle("PC Decomposition")
+
+ggsave("../Figures/tradeoffs_pcplot.jpeg", height = 6, width = 4)
+```
+
+# Fitting a 3d figure
+
+```{r}
+library(plot3D)
+pc1_loadings <- pc$rotation[,1]
+pc1_fit <- data.frame(t((pc1_loadings) %*% t(c(-2.45, 2.5))))
+colnames(pc1_fit) = c("N", "P", "K")
+
+theta = 30
+phi = 30
+
+# jpeg("../Figures/3dviz.jpeg", height = 5, width = 6)
+
+scatter3D(z = smadat$trt_N, x = smadat$trt_P, y = smadat$trt_K, pch = 19, cex = 1, 
+      theta = theta, phi = phi, col = "blue",
+      xlab = "P Response", ylab = "K Response", zlab = "N Response", 
+      main = "Overall Treatment Responses", alpha = .25, colkey = FALSE, ticktype = "detailed")
+
+scatter3D(z = pc1_fit$N, x = pc1_fit$P, y = pc1_fit$K, pch = 19, lwd = 2, 
+      theta = theta, phi = phi, col = "black", add = TRUE, type = "l", lty = 2)
+```
+
+
+
+

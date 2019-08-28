@@ -30,16 +30,17 @@ library(corrplot) # Correlation plots
 
 ```{r}
 # Plot descriptions
-plot.descriptions <- read.csv("../data/comb-by-plot-clim-soil-diversity-21-Feb-2019.csv",
+plot.descriptions <- read.csv("../data/comb-by-plot-clim-soil-diversity-02-Aug-2019.csv",
                            stringsAsFactors = FALSE,
                            na.strings = c('NA','NULL'))
 
 # Soil data
-soil.chars <- read.csv("../data/soil-nutrients-21-February-2019.csv",
+soil.chars <- read.csv("../data/soil-nutrients-22-February-2019.csv",
                        stringsAsFactors = FALSE,
                        na.strings = c('NA','NULL'))
 # Annual climate data
-climate <- read.csv(file = "../Data/Weather_annual_20190624.csv.csv")
+climate <- read.csv(file = "../Data/Weather_annual_20190624.csv",
+                    stringsAsFactors = FALSE)
 
 # Loading in dataset (Updated to Feb 22st 2019)
 cover <- fread('../Data/full-cover-22-February-2019.csv',
@@ -163,12 +164,16 @@ diag(solve(soilcor))
 
 
 ```{r}
+
+
+
 climate_summary = climate %>%
   filter(year < 2019 & 
            ppt > 0 &
            pet > 0) %>%
   group_by(site_code) %>%
   summarize(mean_wtrdef = mean(pet - ppt),
+            sd_ppt = sd(ppt),
             sd_wtrdef = sd(pet - ppt))
 
 climcor = cor(climate_summary %>% select(mean_wtrdef, sd_wtrdef))
