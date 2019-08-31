@@ -34,11 +34,12 @@ of features that can also be used to subset the dataset prior to conducting thes
 ```{r, message = FALSE, echo = FALSE}
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 
-library(tidyverse);library(data.table);library(dtplyr); library(gridExtra); library(grid)
+library(tidyverse);library(data.table);library(dtplyr); 
+library(gridExtra); library(grid); library(smatr)
 
-ttable <- fread("../Data/tuningtable.csv")
+ttable <- fread("../../Data/tuningtable.csv")
 
-specscores_full <- read.csv("../Data/tradeoffs_specscores.csv")
+specscores_full <- read.csv("../../Data/tradeoffs_specscores.csv")
 
 specscores_long <- specscores_full %>% 
   select(-X) %>% 
@@ -51,7 +52,7 @@ specscores_long <- specscores_full %>%
 #                stringsAsFactors = FALSE,
 #                na.strings = c('NA','NULL'))
 
-cover <- fread('../Data/full-cover-02-August-2019.csv')
+cover <- fread('../../Data/full-cover-02-August-2019.csv')
 
 taxonomy <- cover %>% group_by(site_code, Taxon) %>%
   filter(!is.null(Family)) %>%
@@ -66,14 +67,10 @@ taxonomy <- cover %>% group_by(site_code, Taxon) %>%
   mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
   mutate(Taxon = str_trim(Taxon))
 
-#site.covars <- read.csv("../Data/site_covars.csv")
-
-site_pvals = read.csv("../Data/tradeoffs_RRPP_Pvals.csv", header = TRUE, stringsAsFactors = FALSE)
+site_pvals = read.csv("../../Data/tradeoffs_RRPP_Pvals.csv", header = TRUE, stringsAsFactors = FALSE)
 site_pvals = site_pvals %>% rename(site.K = trt_K_num, site.N = trt_N_num, site.P = trt_P_num)
 
-dot_full = read.csv("../Data/dot_full.csv")
-
-library(gridExtra)
+dot_full = read.csv("../../Data/dot_full.csv")
 ```
 
 ```{r}
@@ -118,60 +115,94 @@ full_responses %>%
 # Fitting with SMAs
 
 ```{r}
-library(smatr)
-
 smadat <- full_responses %>%
   spread(key = "trt", value = "Coef")
 
+# N-P tradeoff
 smafit <- sma(trt_P ~ trt_N * functional_group, smadat)
-summary(smafit)
-
-smafit$groupsummary %>%
-  ggplot(aes(color = functional_group,
-             slope = Slope,
-             intercept = Int)) +
+NP_plot <- smafit$groupsummary %>%
+  ggplot() +
   geom_abline(aes(slope = Slope,
              intercept = Int,
              color = group), 
              data = smafit$groupsummary,
-             size = 2) +
-  xlim(-2, 2) +
-  ylim(-2, 2) +
-  xlab("N Response") +
-  ylab("P Response")
+             size = 1) +
+  geom_point(aes(x = trt_N,
+                 y = trt_P, 
+                 color = functional_group),
+             data = smadat,
+             alpha = .2) +
+  xlim(-20, 20) +
+  ylim(-20, 20) +
+  xlab("N Response (%Cover / Log(Yr_Trt))") +
+  ylab("P Response (%Cover / Log(Yr_Trt))") +
+  labs(color = "Functional Group") +
+  ggtitle("N-P Tradeoff") + 
+  theme(legend.position="bottom")
 
+# N-K tradeoff
 smafit <- sma(trt_K ~ trt_N * functional_group, smadat)
-
-smafit$groupsummary %>%
-  ggplot(aes(color = functional_group,
-             slope = Slope,
-             intercept = Int)) +
+NK_plot <- smafit$groupsummary %>%
+  ggplot() +
   geom_abline(aes(slope = Slope,
              intercept = Int,
              color = group), 
              data = smafit$groupsummary,
-             size = 2) +
-  xlim(-2, 2) +
-  ylim(-2, 2) +
-  xlab("N Response") +
-  ylab("K Response")
+             size = 1) +
+  geom_point(aes(x = trt_N,
+                 y = trt_K, 
+                 color = functional_group),
+             data = smadat,
+             alpha = .2) +
+  xlim(-20, 20) +
+  ylim(-20, 20) +
+  xlab("N Response (%Cover / Log(Yr_Trt))") +
+  ylab("K Response (%Cover / Log(Yr_Trt))") +
+  labs(color = "Functional Group") +
+  ggtitle("N-K Tradeoff") + 
+  theme(legend.position="bottom")
 
+# P-K tradeoff
 smafit <- sma(trt_K ~ trt_P * functional_group, smadat)
-summary(smafit)
-
-smafit$groupsummary %>%
-  ggplot(aes(color = functional_group,
-             slope = Slope,
-             intercept = Int)) +
+PK_plot <- smafit$groupsummary %>%
+  ggplot() +
   geom_abline(aes(slope = Slope,
              intercept = Int,
              color = group), 
              data = smafit$groupsummary,
-             size = 2) +
-  xlim(-2, 2) +
-  ylim(-2, 2) +
-  xlab("P Response") +
-  ylab("K Response")
+             size = 1) +
+  geom_point(aes(x = trt_P,
+                 y = trt_K, 
+                 color = functional_group),
+             data = smadat,
+             alpha = .2) +
+  xlim(-20, 20) +
+  ylim(-20, 20) +
+  xlab("P Response (%Cover / Log(Yr_Trt))") +
+  ylab("K Response (%Cover / Log(Yr_Trt))") +
+  labs(color = "Functional Group") +
+  ggtitle("P-K Tradeoff")+ 
+  theme(legend.position="bottom")
+
+
+g_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)}
+
+mylegend<-g_legend(NP_plot)
+
+p3 <- arrangeGrob(arrangeGrob(NP_plot + theme(legend.position="none"),
+                         NK_plot + theme(legend.position="none"),
+                         PK_plot + theme(legend.position="none"),
+                         nrow=1),
+             mylegend, nrow=2,heights=c(10, 1))
+
+ggsave("../../Figures/SMAfits.pdf",
+       p3,
+       height = 6,
+       width = 12)
 ```
 
 # Conducting a PCA
@@ -188,7 +219,7 @@ data.frame(pcsummary) %>%
   xlab("Principal Component") +
   ggtitle("PC Decomposition")
 
-ggsave("../Figures/tradeoffs_pcplot.jpeg", height = 6, width = 4)
+ggsave("../../Figures/tradeoffs_pcplot.jpeg", height = 6, width = 4)
 ```
 
 # Fitting a 3d figure

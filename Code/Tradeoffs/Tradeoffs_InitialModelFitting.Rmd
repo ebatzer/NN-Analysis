@@ -22,10 +22,16 @@ library(grid)
 
 ```{r}
 # Community data wide format
-cover.wide <- read.csv("../Data/cover_wide_tradeoffs.csv")
+cover.wide <- read.csv("../../Data/cover_wide_tradeoffs.csv")
+
+# Site attributes
+site.attr <- read.csv("../../Data/comb-by-plot-clim-soil-diversity-02-Aug-2019.csv")
 
 # Analysis parameters
 min_yr_trt <- 5 # Number of years minimum to be included in analysis
+
+# Number of iterations in RRPP
+num_iter <- 9999
 ```
 
 ```{r}
@@ -95,10 +101,10 @@ for(sites in sitenames){
   expect_true(nrow(attr.subset) == nrow(com.subset))
   expect_true(nrow(attr.subset) > 0)
   
-  mod_rrpp <- lm.rrpp(log(com.subset + 1) ~ year_trt + trt_K_num + trt_P_num + trt_N_num + block,
+  mod_rrpp <- lm.rrpp(com.subset ~ year_trt + trt_K_num + trt_P_num + trt_N_num + block,
                       data = attr.subset, 
                       SS.type = "III", 
-                      iter = 999, 
+                      iter = num_iter, 
                       print.progress = FALSE)
   
   # Saving ouput
@@ -128,7 +134,7 @@ for(i in 1:length(output_list)){
 }
 
 write.csv(x = bind_rows(storagelist),
-  "../Data/tradeoffs_RRPP_Pvals.csv")
+  "../../Data/tradeoffs_RRPP_Pvals.csv")
 
 storagelist <- list()
 
@@ -143,17 +149,11 @@ for(i in 1:length(output_list)){
                     sp_scores)
   
   storagelist[[i]] = spectab %>% mutate(trt = gsub("_num", "", trt))
-
-                    # %>%
-                    # mutate(trt = gsub("_num).+", "", trt)) %>%
-                    # mutate(trt = gsub("as.factor\\(", "", trt)) %>%
-                    # group_by(site, trt) %>%
-                    # summarise_all(mean)
 }
 
 specscores_full = data.frame(bind_rows(storagelist))
 specscores_full[is.na(specscores_full)] = 0
-write.csv(specscores_full, "../Data/tradeoffs_specscores.csv")
+write.csv(specscores_full, "../../Data/tradeoffs_specscores.csv")
 ```
 
 ### Calculate dot-product of pairwise correlations
@@ -208,7 +208,7 @@ dotoutput = specscores_full %>% group_by(site) %>%
   do(dotprod(.))
 
 # Load permANOVA p-value output
-site_pvals = read.csv("../Data/tradeoffs_RRPP_Pvals.csv", header = TRUE, stringsAsFactors = FALSE)
+site_pvals = read.csv("../../Data/tradeoffs_RRPP_Pvals.csv", header = TRUE, stringsAsFactors = FALSE)
 
 # Join all together (sites, treatments, dot-product pairs, perMANOVA p-values)
 dot_full = left_join(site_pvals %>% select(-Total, -Residuals), dotoutput) %>% 
@@ -216,11 +216,11 @@ dot_full = left_join(site_pvals %>% select(-Total, -Residuals), dotoutput) %>%
   rename("trt_K" = "trt_K_num", "trt_P" =  "trt_P_num", "trt_N" = "trt_N_num")
 
 # Write final data product
-write.csv(x = dot_full, "../Data/dot_full.csv")
+write.csv(x = dot_full, "../../Data/dot_full.csv")
 ```
 
 ```{r, fig.height = 7, fig.width = 7}
-dot_full <- read.csv("../Data/dot_full.csv")
+dot_full <- read.csv("../../Data/dot_full.csv")
 
 p1 = dot_full %>% # filter(trt_N < .05 & trt_P < .05) %>%
   ggplot(aes(x = NP,
@@ -272,12 +272,47 @@ sigtally %>% ggplot(aes(x = key,
                         fill = key)) +
   geom_bar(aes(y = 1), stat = "identity", fill = "white", color = "black") +
   geom_bar(stat = "identity", color = "black") +
-  scale_fill_manual(values = c("cadetblue", "cadetblue1", "cadetblue4", "gold", "gold3", "gold4", "brown1")) +
+  scale_fill_manual(values = c("cadetblue1", "cadetblue3", "cadetblue4", "gold", "gold3", "gold4", "brown3")) +
   ylim(0, 1) +
   ylab("Proportion of Sites where P < 0.05") +
   xlab("Coefficient")
+```
+
+# Plotting bivariate distributions of correlation relative to other factors
+
+```{r}
+site.summary <- site.attr %>%
+  group_by(site_code) %>%
+  filter(year_trt == 0) %>%
+  summarise(total_richness = unique(site_richness),
+            mean_precip = mean(MAP_v2),
+            mean_pet = mean(PET),
+            pretrt_simpson = mean(inverse_simpson),
+            pretrt_alpha = mean(richness_vegan),
+            pretrt_beta = mean(plot_beta))
 
 
+sitecor.summary <- dot_full %>%
+  rename("site_code" = "site") %>%
+  select(site_code, NP, NK, PK) %>% 
+  left_join(site.summary, by = "site_code") %>%
+  gather(value = "corval",
+         key = "cortype",
+         NP, NK, PK)
+
+newfunc <- function(selected_var){
+  xvar = ensym(selected_var)
+  
+  sitecor.summary %>%
+    ggplot(aes(x = !!xvar,
+               y = corval,
+               color = cortype)) +
+    geom_point()+ 
+    stat_smooth(method = "lm", se = FALSE)
+}
+
+newfunc(mean_precip)  
 
 ```
+
 
