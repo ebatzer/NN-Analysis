@@ -30,26 +30,29 @@ library(corrplot) # Correlation plots
 
 ```{r}
 # Plot descriptions
-plot.descriptions <- read.csv("../data/comb-by-plot-clim-soil-diversity-02-Aug-2019.csv",
+plot.descriptions <- read.csv("../../Data/comb-by-plot-clim-soil-diversity-02-Aug-2019.csv",
                            stringsAsFactors = FALSE,
                            na.strings = c('NA','NULL'))
 
 # Soil data
-soil.chars <- read.csv("../data/soil-nutrients-22-February-2019.csv",
+soil.chars <- read.csv("../../Data/soil-nutrients-22-February-2019.csv",
                        stringsAsFactors = FALSE,
                        na.strings = c('NA','NULL'))
 # Annual climate data
-climate <- read.csv(file = "../Data/Weather_annual_20190624.csv",
+climate <- read.csv(file = "../../Data/Old/Weather_annual_20190510.csv",
                     stringsAsFactors = FALSE)
 
-# Loading in dataset (Updated to Feb 22st 2019)
-cover <- fread('../Data/full-cover-22-February-2019.csv',
+# Loading in dataset (Updated to Aug 02 2019)
+cover <- fread('../../Data/full-cover-02-August-2019.csv',
                   stringsAsFactors = FALSE,
                   na.strings = c('NA','NULL'))
 
 # Stoichiometry table
-stoichrat <- read.csv("../Data/stoichtable.csv",
+stoichrat <- read.csv("../../Data/stoichtable.csv",
          stringsAsFactors = FALSE)
+
+# Function to calculate network-wide site z-scores
+calc_zscores <- function(x){(x - mean(na.omit(x))) / sd(na.omit(x))}
 ```
 
 # Defining variables of interest:
@@ -122,11 +125,11 @@ soil.chars = soil.chars %>%
   mutate(block = as.factor(block),
          plot = as.factor(plot))
 
-View(soil.chars %>% filter(site_code == "mcla.us"))
-
 # Selecting parameters of interest
 soil.stdized = soil.chars %>% 
   select(site_code, pct_N, pct_C, ppm_P, ppm_K, pH) %>%
+  mutate_if(is.numeric, log) %>%
+  mutate_if(is.numeric, calc_zscores) %>%
   na.omit() %>%
   group_by(site_code) %>%
   summarise(mean_N = mean(pct_N),
@@ -138,45 +141,42 @@ soil.stdized = soil.chars %>%
             sd_C = sd(pct_C),
             sd_P = sd(ppm_P),
             sd_K = sd(ppm_K),
-            var_pH = sd(pH)) %>%
-  mutate(cv_N = sd_N / mean_N,
-         cv_C = sd_C / mean_C,
-         cv_P = sd_P / mean_P,
-         cv_K = sd_K / mean_K) %>%
-  mutate_if(is.numeric, log) %>%
+            sd_pH = sd(pH)) %>%
   filter_all(any_vars(is.finite(.))) %>%
-  ungroup() %>%
-  select(-contains("sd")) %>%
-  rename("sd_pH" = "var_pH")
+  ungroup()
  
+# Histograms of all data
 soil.stdized %>%
-  gather(key = "var", value = "val", -site_code) %>%
+  gather(key = "sd", value = "val", -site_code) %>%
   ggplot(aes(x = val)) +
   geom_histogram() +
-  facet_wrap(~var, scales = "free")
+  facet_wrap(~sd, scales = "free")
+
+# Log transformation of summed sdiances seems approximately normal
+# Could summarize euclidean distance within each plot and log-transform?
+hist(log(soil.stdized$sd_K + soil.stdized$sd_K + soil.stdized$sd_P))
 
 soil.stdized <- soil.stdized[!is.infinite(rowSums(soil.stdized %>% select(-site_code))),]
-soilcor = cor(soil.stdized %>% na.omit() %>% select(cv_N, cv_P, cv_C, cv_K,
+soilcor = cor(soil.stdized %>% na.omit() %>% select(sd_N, sd_P, sd_C, sd_K,
                                       mean_N, mean_P, mean_C, mean_K, mean_pH, sd_pH))
 corrplot(soilcor, method="circle")
 diag(solve(soilcor))
 ```
 
-
 ```{r}
-
-
-
 climate_summary = climate %>%
   filter(year < 2019 & 
            ppt > 0 &
            pet > 0) %>%
+  mutate(ppt = calc_zscores(log(ppt)),
+         pet = calc_zscores(log(pet))) %>%
   group_by(site_code) %>%
-  summarize(mean_wtrdef = mean(pet - ppt),
-            sd_ppt = sd(ppt),
-            sd_wtrdef = sd(pet - ppt))
+  summarize(sd_ppt = sd(ppt),
+            sd_pet = sd(pet),
+            mean_ppt = mean(ppt),
+            mean_pet = mean(pet))
 
-climcor = cor(climate_summary %>% select(mean_wtrdef, sd_wtrdef))
+climcor = cor(climate_summary %>% select(-site_code))
 corrplot(climcor, method="circle")
 diag(solve(climcor))
 ```
@@ -195,7 +195,7 @@ full_table = full_join(site_summary, soil.stdized) %>%
   full_join(climate_summary)
 
 write.csv(x = full_table ,
-          "../Data/divturnover_explanatory.csv")
+          "../../Data/divturnover_explanatory.csv")
 ```
 
 

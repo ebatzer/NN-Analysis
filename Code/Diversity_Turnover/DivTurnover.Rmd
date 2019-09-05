@@ -32,28 +32,29 @@ library(data.table) # Fast reading of data tables
 library(testthat) # Unit testing
 library(dtplyr) # Data.table dplyr functions
 library(gridExtra)
-library(JostDiv) # Exponentiated diversity indices (Hill Numbers)
+library(JostDiv) # Exponentiated diversity indices (Hill Numbers).
+library(betapart)
 ```
     
 ### Reading in Datasets
 
 ```{r}
 # Biomass data
-biomass_data <- fread("../Data/comb-by-plot-02-August-2019.csv",
+biomass_data <- fread("../../Data/comb-by-plot-02-August-2019.csv",
                   stringsAsFactors = FALSE,
                   na.strings = c('NA','NULL'))
 
 # Loading in dataset (Updated to Feb 22st 2019)
-cover <- fread('../Data/full-cover-02-August-2019.csv',
+cover <- fread('../../Data/full-cover-02-August-2019.csv',
                   stringsAsFactors = FALSE,
                   na.strings = c('NA','NULL'))
 
 # Plot descriptions
-plot.descriptions <-  read.csv("../Data/comb-by-plot-clim-soil-diversity-02-Aug-2019.csv",
+plot.descriptions <-  read.csv("../../Data/comb-by-plot-clim-soil-diversity-02-Aug-2019.csv",
                               stringsAsFactors = FALSE)
 
 # Soil characteristics
-soil.chars <- read.csv("../Data/soil-nutrients-22-February-2019.csv",
+soil.chars <- read.csv("../../Data/soil-nutrients-22-February-2019.csv",
                               stringsAsFactors = FALSE)
 ```
 
@@ -108,7 +109,7 @@ spat_div = cover.wide %>% group_by(site_code, block) %>%
            calc_div(.[,-c(1:3)], qval = 1),
            calc_div(.[,-c(1:3)], qval = 2)))
 
-write.csv("../Data/diversity_spatial_full.csv",
+write.csv("../../Data/diversity_spatial_full.csv",
            x = spat_div)
 
 unique(com_spatial$site_name)
@@ -215,7 +216,7 @@ temp_div = right_join(cover.wide, enoughcoverage) %>%
            calc_div(.[,-c(1:4)], qval = 1),
            calc_div(.[,-c(1:4)], qval = 2)))
 
-write.csv("../Data/diversity_temporal_full.csv",
+write.csv("../../Data/diversity_temporal_full.csv",
           x = temp_div)
 ```
 
@@ -329,8 +330,6 @@ full_join(df1, df2) %>%
 # Pairwise dissimilarity metrics
 
 ```{r}
-library(betapart)
-
 com_spatial <- cover %>% 
   filter(year_trt == 0) %>%
   filter(site_code %in% sitevec) %>% 
@@ -347,14 +346,37 @@ spatial_turnover <- cover.wide %>%
   mutate_all(as.numeric)
 
 spatial_turnover[spatial_turnover > 0] = 1
-head(spatial_turnover)
+
+plot_desc_filtered <- plot.descriptions %>% 
+  filter(year_trt == 0) %>%
+  filter(site_code %in% sitevec)
 
 com.list <- split(spatial_turnover , cover.wide$site_code)
 
-betadiv <- lapply(com.list, beta.pair, index.family = "jaccard")
+envtl.list <- split(plot_desc_filtered$proportion_par, plot_desc_filtered$site_code)
 
+com_beta <- lapply(com.list, beta.pair, index.family = "jaccard")
+
+light_het <- lapply(envtl.list, dist, "euclidean")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
 names(betadiv)
 output <- list()
+i = 1
 for(i in 1:length(betadiv)){
   
   mat <- as.matrix(betadiv[[i]]$beta.jtu)
@@ -367,12 +389,13 @@ for(i in 1:length(betadiv)){
   jac <- t(combn(colnames(mat), 2))
   
   output[[i]] <- bind_cols(
-    data.frame(jac, dist=mat[jac], site = names(betadiv)[i]) %>% rename("Jac" = "dist"),
+    data.frame(jac, dist=mat[as.numeric(jtu[,1]), as.numeric(jtu[,2])], site = names(betadiv)[i]) %>% rename("Jac" = "dist"),
     data.frame(jtu, dist=mat[jtu], site = names(betadiv)[i]) %>% rename("Jtu" = "dist") %>% select(Jtu),
     data.frame(jne, dist=mat[jne], site = names(betadiv)[i]) %>% rename("Jne" = "dist") %>% select(Jne))
 }
 
 bind_rows(output)
 lapply(unique(cover.wide$site_code), beta.pair)
+
 ```
 
