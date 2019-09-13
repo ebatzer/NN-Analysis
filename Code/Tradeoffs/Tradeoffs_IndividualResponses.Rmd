@@ -7,11 +7,11 @@ output:
 
 # Individual Responses
 
-To better understand why certain sites express correlations in their N, P, and K 
+To better understand why certain sites express correlations in their N, P, and K
 response trajectories, we can look at the individual responses of species that
 constitute these community-level effects.
 
-From existing work on nutrient enrichment (both in NutNet and other meta-analysis), 
+From existing work on nutrient enrichment (both in NutNet and other meta-analysis),
 there are a number of patterns that might be expected:
 
 * Dominant species respond more positively to nutrient enrichment than non-dominants
@@ -34,15 +34,15 @@ of features that can also be used to subset the dataset prior to conducting thes
 ```{r, message = FALSE, echo = FALSE}
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 
-library(tidyverse);library(data.table);library(dtplyr); 
+library(tidyverse);library(data.table);library(dtplyr);
 library(gridExtra); library(grid); library(smatr)
 
 ttable <- fread("../../Data/tuningtable.csv")
 
 specscores_full <- read.csv("../../Data/tradeoffs_specscores.csv")
 
-specscores_long <- specscores_full %>% 
-  select(-X) %>% 
+specscores_long <- specscores_full %>%
+  select(-X) %>%
   gather(key = "Taxon", value = "Coef", - site, - trt) %>%
   mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
   mutate(Taxon = str_trim(Taxon)) %>%
@@ -84,7 +84,7 @@ seem to be quite correlated. I've only showed correlations between the response
 to N enrichment (trt_N) and P enrichment (trt_P):
 
 ```{r}
-full_responses %>% 
+full_responses %>%
   spread(key = trt, value = Coef) %>%
   ggplot(aes(x = trt_N, y = trt_P)) +
   geom_point(aes(color = functional_group), alpha = .4) +
@@ -93,7 +93,7 @@ full_responses %>%
   xlab("Beta_N") +
   ylab("Beta_P")
 
-full_responses %>% 
+full_responses %>%
   spread(key = trt, value = Coef) %>%
   ggplot(aes(x = trt_N, y = trt_K)) +
   geom_point(aes(color = functional_group), alpha = .4) +
@@ -102,7 +102,7 @@ full_responses %>%
   xlab("Beta_N") +
   ylab("Beta_K")
 
-full_responses %>% 
+full_responses %>%
   spread(key = trt, value = Coef) %>%
   ggplot(aes(x = trt_P, y = trt_K)) +
   geom_point(aes(color = functional_group), alpha = .4) +
@@ -124,11 +124,11 @@ NP_plot <- smafit$groupsummary %>%
   ggplot() +
   geom_abline(aes(slope = Slope,
              intercept = Int,
-             color = group), 
+             color = group),
              data = smafit$groupsummary,
              size = 1) +
   geom_point(aes(x = trt_N,
-                 y = trt_P, 
+                 y = trt_P,
                  color = functional_group),
              data = smadat,
              alpha = .2) +
@@ -137,7 +137,7 @@ NP_plot <- smafit$groupsummary %>%
   xlab("N Response (%Cover / Log(Yr_Trt))") +
   ylab("P Response (%Cover / Log(Yr_Trt))") +
   labs(color = "Functional Group") +
-  ggtitle("N-P Tradeoff") + 
+  ggtitle("N-P Tradeoff") +
   theme(legend.position="bottom")
 
 # N-K tradeoff
@@ -146,11 +146,11 @@ NK_plot <- smafit$groupsummary %>%
   ggplot() +
   geom_abline(aes(slope = Slope,
              intercept = Int,
-             color = group), 
+             color = group),
              data = smafit$groupsummary,
              size = 1) +
   geom_point(aes(x = trt_N,
-                 y = trt_K, 
+                 y = trt_K,
                  color = functional_group),
              data = smadat,
              alpha = .2) +
@@ -159,7 +159,7 @@ NK_plot <- smafit$groupsummary %>%
   xlab("N Response (%Cover / Log(Yr_Trt))") +
   ylab("K Response (%Cover / Log(Yr_Trt))") +
   labs(color = "Functional Group") +
-  ggtitle("N-K Tradeoff") + 
+  ggtitle("N-K Tradeoff") +
   theme(legend.position="bottom")
 
 # P-K tradeoff
@@ -168,11 +168,11 @@ PK_plot <- smafit$groupsummary %>%
   ggplot() +
   geom_abline(aes(slope = Slope,
              intercept = Int,
-             color = group), 
+             color = group),
              data = smafit$groupsummary,
              size = 1) +
   geom_point(aes(x = trt_P,
-                 y = trt_K, 
+                 y = trt_K,
                  color = functional_group),
              data = smadat,
              alpha = .2) +
@@ -181,7 +181,7 @@ PK_plot <- smafit$groupsummary %>%
   xlab("P Response (%Cover / Log(Yr_Trt))") +
   ylab("K Response (%Cover / Log(Yr_Trt))") +
   labs(color = "Functional Group") +
-  ggtitle("P-K Tradeoff")+ 
+  ggtitle("P-K Tradeoff")+
   theme(legend.position="bottom")
 
 
@@ -211,7 +211,7 @@ ggsave("../../Figures/SMAfits.pdf",
 pc <- prcomp(smadat %>% select(trt_N, trt_K, trt_P))
 pc$sdev[1] / sum(pc$sdev)
 pcsummary <- summary(pc)$importance[2,]
-data.frame(pcsummary) %>% 
+data.frame(pcsummary) %>%
   ggplot(aes(x = c("PC1", "PC2", "PC3"),
              y = pcsummary)) +
   geom_bar(stat = "identity", fill = "white", color = "black") +
@@ -227,7 +227,7 @@ ggsave("../../Figures/tradeoffs_pcplot.jpeg", height = 6, width = 4)
 ```{r}
 library(plot3D)
 pc1_loadings <- pc$rotation[,1]
-pc1_fit <- data.frame(t((pc1_loadings) %*% t(c(-2.45, 2.5))))
+pc1_fit <- data.frame(t((pc1_loadings) %*% t(c(-25, 20))))
 colnames(pc1_fit) = c("N", "P", "K")
 
 theta = 30
@@ -235,15 +235,11 @@ phi = 30
 
 # jpeg("../Figures/3dviz.jpeg", height = 5, width = 6)
 
-scatter3D(z = smadat$trt_N, x = smadat$trt_P, y = smadat$trt_K, pch = 19, cex = 1, 
+scatter3D(z = smadat$trt_N, x = smadat$trt_P, y = smadat$trt_K, pch = 19, cex = 1,
       theta = theta, phi = phi, col = "blue",
-      xlab = "P Response", ylab = "K Response", zlab = "N Response", 
+      xlab = "P Response", ylab = "K Response", zlab = "N Response",
       main = "Overall Treatment Responses", alpha = .25, colkey = FALSE, ticktype = "detailed")
 
-scatter3D(z = pc1_fit$N, x = pc1_fit$P, y = pc1_fit$K, pch = 19, lwd = 2, 
+scatter3D(z = pc1_fit$N, x = pc1_fit$P, y = pc1_fit$K, pch = 19, lwd = 2,
       theta = theta, phi = phi, col = "black", add = TRUE, type = "l", lty = 2)
 ```
-
-
-
-
