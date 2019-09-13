@@ -95,7 +95,7 @@ for(sites in sitenames){
   expect_true(nrow(attr.subset) == nrow(com.subset))
   expect_true(nrow(attr.subset) > 0)
   
-  mod_rrpp <- lm.rrpp(log(com.subset + 1) ~ year_trt + trt_K_num + trt_P_num + trt_N_num + block,
+  mod_rrpp <- lm.rrpp(com.subset + 1 ~ year_trt + trt_K_num + trt_P_num + trt_N_num + block,
                       data = attr.subset, 
                       SS.type = "III", 
                       iter = 999, 
@@ -276,8 +276,5 @@ sigtally %>% ggplot(aes(x = key,
   ylim(0, 1) +
   ylab("Proportion of Sites where P < 0.05") +
   xlab("Coefficient")
-
-
-
 ```
 

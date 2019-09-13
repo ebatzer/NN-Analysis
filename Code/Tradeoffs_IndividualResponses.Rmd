@@ -135,8 +135,8 @@ smafit$groupsummary %>%
              color = group), 
              data = smafit$groupsummary,
              size = 2) +
-  xlim(-2, 2) +
-  ylim(-2, 2) +
+  xlim(-25, 25) +
+  ylim(-25, 25) +
   xlab("N Response") +
   ylab("P Response")
 
@@ -151,8 +151,8 @@ smafit$groupsummary %>%
              color = group), 
              data = smafit$groupsummary,
              size = 2) +
-  xlim(-2, 2) +
-  ylim(-2, 2) +
+  xlim(-25, 25) +
+  ylim(-25, 25) +
   xlab("N Response") +
   ylab("K Response")
 
@@ -168,8 +168,8 @@ smafit$groupsummary %>%
              color = group), 
              data = smafit$groupsummary,
              size = 2) +
-  xlim(-2, 2) +
-  ylim(-2, 2) +
+  xlim(-25, 25) +
+  ylim(-25, 25) +
   xlab("P Response") +
   ylab("K Response")
 ```
@@ -196,7 +196,7 @@ ggsave("../Figures/tradeoffs_pcplot.jpeg", height = 6, width = 4)
 ```{r}
 library(plot3D)
 pc1_loadings <- pc$rotation[,1]
-pc1_fit <- data.frame(t((pc1_loadings) %*% t(c(-2.45, 2.5))))
+pc1_fit <- data.frame(t((pc1_loadings) %*% t(c(-25, 20))))
 colnames(pc1_fit) = c("N", "P", "K")
 
 theta = 30
