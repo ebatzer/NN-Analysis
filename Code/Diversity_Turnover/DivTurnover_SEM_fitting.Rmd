@@ -1,0 +1,153 @@
+---
+title: "DivTurnover_SEMFitting"
+output: html_document
+---
+
+```{r}
+SEM_table <- read.csv("../../Data/SEM_table.csv")
+head(SEM_table)
+
+
+# look at creating a composite variable:
+https://www.imachordata.com/ecological-sems-and-composite-variables-what-why-and-how/
+```
+
+```{r}
+mean_par_plot <- SEM_table %>%
+  ggplot(aes(y = spatial_mean_par,
+             x = spatial_mean_biomass)) +
+  geom_point() +
+  stat_smooth(method = "lm", 
+              formula = "y ~ log(x)") +
+  xlab("Spatial Mean of Biomass") +
+  ylab("Spatial Mean in Light Interception")
+
+sd_par_plot <- SEM_table %>%
+  ggplot(aes(y = spatial_sd_par / spatial_mean_par,
+             x = spatial_sd_biomass / spatial_mean_biomass)) +
+  geom_point() +
+  stat_smooth(method = "lm") +
+  # xlim(0, 1) +
+  xlab("Spatial CV of Biomass") +
+  ylab("Spatial sd in Light Interception")
+
+grid.arrange(mean_par_plot, sd_par_plot, nrow = 1)
+
+mod_CV <- lm(spatial_sd_par ~ I(spatial_sd_biomass / spatial_mean_biomass), 
+             data = SEM_table)
+
+mod_multiple <- lm(spatial_sd_par ~ spatial_sd_biomass * spatial_mean_biomass, 
+                   data = SEM_table)
+
+AIC(mod_CV, mod_multiple)
+```
+
+```{r}
+SEM_table %>%
+  ggplot(aes(x = spatial_sd_biomass / spatial_mean_biomass,
+             y = log(spatial_beta_q0))) +
+  geom_point() +
+  stat_smooth(method = "lm") +
+  xlim(.2, 1)
+
+SEM_table %>%
+  ggplot(aes(x = log(spatial_sd_par),
+             y = spatial_beta_q0)) +
+  geom_point() +
+  stat_smooth(method = "lm")
+
+hist(SEM_table$spatial_sd_par)
+
+SEM_table %>% select(site_code, spatial_sd_par, spatial_beta_q0, spatial_gamma_q0) %>%
+  arrange(desc(spatial_sd_par))
+
+mod_bmass <- lm(log(spatial_alpha_q0) ~ log(spatial_gamma_q0) + I(spatial_sd_biomass / spatial_mean_biomass), data = SEM_table)
+summary(mod_bmass)
+
+mod_bmass <- lm(log(spatial_beta_q0) ~ log(spatial_gamma_q0) + I(spatial_sd_biomass / spatial_mean_biomass), data = SEM_table)
+summary(mod_bmass)
+
+mod_par <- lm(log(spatial_alpha_q0) ~ log(spatial_gamma_q0) + I(spatial_sd_par / spatial_mean_par), data = SEM_table)
+summary(mod_par)
+
+comp_mod <- lm(I(spatial_sd_biomass / spatial_mean_biomass) ~ sd_N + sd_pH, data = SEM_table)
+summary(comp_mod)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+spatial_table = SEM_table
+# Create data object and rename variables for clarity
+site.sem.dat <- data.frame()
+site.sem.dat<- spatial_table$SiteCode
+
+# Richness
+site.sem.dat$SiteRich <- log(spatial_table$spatial_gamma_q0)
+site.sem.dat$SiteBeta <- log(spatial_table$spatial_beta_q0)
+  
+# Soil resources (means are log-transformed)
+site.sem.dat$mean_N <- spatial_table$mean_N
+site.sem.dat$mean_C <- spatial_table$mean_C
+site.sem.dat$mean_P <- spatial_table$mean_P
+site.sem.dat$mean_K <- spatial_table$mean_K
+site.sem.dat$mean_ph <- spatial_table$mean_pH
+
+# Heterogeneity in soil resources
+site.sem.dat$var_N <- spatial_table$sd_N
+site.sem.dat$var_C <- spatial_table$sd_C
+site.sem.dat$var_P <- spatial_table$sd_P
+site.sem.dat$var_K <- spatial_table$sd_K
+site.sem.dat$var_ph <- spatial_table$sd_pH
+
+# Climate
+site.sem.dat$MAP  <- log(spatial_table$MAP_v2)
+site.sem.dat$MAT <- spatial_table$MAT_v2
+
+# PAR
+site.sem.dat$light_sd <- spatial_table$spatial_sd_par
+site.sem.dat$light_mean <- spatial_table$spatial_mean_par
+
+# Biomass and Site Covariates
+site.sem.dat$SiteBiomass <- spatial_table$spatial_mean_biomass
+site.sem.dat$SpatialHet <- spatial_table$spatial_sd_biomass
+site.sem.dat$AnthroDisturbance <- spatial_table$anthropogenic #anthropogenic disturbance
+site.sem.dat$Grazing <- spatial_table$grazed
+
+# Simple SEM
+sitemod <- '# Latent variables
+            SoilHeterogeneity =~ var_ph + var_N + var_P + var_K
+          
+            # Regressions
+            SpatialHet ~ SoilHeterogeneity + Grazing + AnthroDisturbance
+            light_sd ~ SpatialHet 
+            SiteRich ~ SpatialHet + Grazing + AnthroDisturbance
+            SiteBeta ~ SiteRich + light_sd'
+
+sitemod.fit <- sem(sitemod, data=as.data.frame(site.sem.dat), fixed.x=FALSE, meanstructure = TRUE)  # run model
+
+summary(sitemod.fit)
+
+library(lavaan)
+
+```
+

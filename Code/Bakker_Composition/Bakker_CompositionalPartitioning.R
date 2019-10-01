@@ -60,7 +60,7 @@ plotlist <- function(datafile = datafile, site_code = site_code) {
   temp[temp == 0] <- "."
   temp
 }
-
+getwd()
 # Function to conduct site-specific taxonomic adjustments
 source("Taxonomic.Adjustments.function.190802.R")
 

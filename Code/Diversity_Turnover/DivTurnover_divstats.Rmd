@@ -39,26 +39,22 @@ library(JostDiv) # Exponentiated diversity indices (Hill Numbers)
 
 ```{r}
 # Biomass data
-biomass_data <- fread("../Data/comb-by-plot-22-February-2019.csv",
+biomass_data <- fread("../../Data/comb-by-plot-02-August-2019.csv",
                   stringsAsFactors = FALSE,
                   na.strings = c('NA','NULL'))
 
 # Loading in dataset (Updated to Feb 22st 2019)
-cover <- fread('../Data/full-cover-22-February-2019.csv',
+cover <- fread('../../Data/full-cover-02-August-2019.csv',
                   stringsAsFactors = FALSE,
                   na.strings = c('NA','NULL'))
 
 # Plot descriptions
-plot.descriptions <-  read.csv("../Data/comb-by-plot-clim-soil-diversity-22-Feb-2019.csv",
+plot.descriptions <-  read.csv("../../Data/comb-by-plot-clim-soil-diversity-02-Aug-2019.csv",
                               stringsAsFactors = FALSE)
 
 # Soil characteristics
-soil.chars <- read.csv("../Data/soil-nutrients-21-February-2019.csv",
+soil.chars <- read.csv("../../Data/soil-nutrients-22-February-2019.csv",
                               stringsAsFactors = FALSE)
-
-# Site covariates
-site.covars <- read.csv("../Data/site_covars.csv",
-                        stringsAsFactors = FALSE)
 
 ```
 
@@ -87,18 +83,29 @@ cover.wide <- data.frame(com_spatial) %>%
                     fun.aggregate = sum,drop=T,fill=0)
 
 calc_div = function(x, qval){
-
-  sample_p = vegan::decostand(x, method = "total")
-  alpha = apply(sample_p, MARGIN = 1,
-                d_calc, q = qval, sample.weight = 1)
-
-  comm_p = colSums(sample_p) / sum(sample_p)
   
-  # This isn't working for some reason...
-  gamma = d_calc(as.vector(comm_p), q = qval, sample.weight = 1)
+  if(qval == 0){
+    
+    alpha = vegan::specnumber(x)
+    gamma = vegan::specnumber(colSums(x))
+    beta = gamma / alpha
+  }
+  
+  if(qval == 1){
+    alpha = exp(vegan::diversity(x, "shannon"))
+    gamma = exp(vegan::diversity(colSums(x), "shannon"))
+    beta = gamma / alpha
+  }
+    
+  if(qval == 2){
+    alpha = vegan::diversity(x, "invsimpson")
+    gamma = vegan::diversity(colSums(x), "invsimpson")
+    beta = gamma / alpha
+  }
+  
   output = data.frame(alpha = alpha,
                       gamma = rep(gamma, length(alpha)),
-                      beta = gamma / alpha)
+                      beta = beta)
   
   names(output) = paste0(names(output), paste("_q", qval, sep = ""), sep = "")
   
@@ -106,15 +113,14 @@ calc_div = function(x, qval){
   
 }
 
-
 spat_div = cover.wide %>% group_by(site_code, block) %>%
   do(cbind(plot = .$plot, 
            calc_div(.[,-c(1:3)], qval = 0),
            calc_div(.[,-c(1:3)], qval = 1),
            calc_div(.[,-c(1:3)], qval = 2)))
 
-write.csv("../Data/diversity_spatial_full.csv",
-           x = spat_div)
+write.csv("../../Data/diversity_spatial_full.csv",
+            x = spat_div)
 
 unique(com_spatial$site_name)
 ```
@@ -192,35 +198,15 @@ enoughcoverage = cover.wide %>% group_by(site_code, block, plot) %>%
   summarise(count = length(unique(year_trt))) %>%
   filter(count == 5)
 
-calc_div = function(x, qval){
-
-  sample_p = vegan::decostand(x, method = "total")
-  alpha = apply(sample_p, MARGIN = 1,
-                d_calc, q = qval, sample.weight = 1)
-
-  comm_p = colSums(sample_p) / sum(sample_p)
-  
-  # This isn't working for some reason...
-  gamma = d_calc(as.vector(comm_p), q = qval, sample.weight = 1)
-  output = data.frame(alpha = alpha,
-                      gamma = rep(gamma, length(alpha)),
-                      beta = gamma / alpha)
-  
-  names(output) = paste0(names(output), paste("_q", qval, sep = ""), sep = "")
-  
-  return(output)
-  
-}
-
 temp_div = right_join(cover.wide, enoughcoverage) %>% 
   select(-count, -year_trt) %>% 
-  group_by(site_code, block, plot) %>%
+  group_by(site_code, block) %>%
   do(cbind(year = .$year,
            calc_div(.[,-c(1:4)], qval = 0),
            calc_div(.[,-c(1:4)], qval = 1),
            calc_div(.[,-c(1:4)], qval = 2)))
 
-write.csv("../Data/diversity_temporal_full.csv",
+write.csv("../../Data/diversity_temporal_full.csv",
           x = temp_div)
 ```
 
@@ -275,12 +261,20 @@ full_join(df1, df2) %>%
 st_summary = full_join(df1, df2) %>%
   group_by(site_code, block) %>%
   summarise(t_beta = mean(na.omit(temp_beta)),
-            s_beta = mean(na.omit(spat_beta)))
+            s_beta = mean(na.omit(spat_beta)),
+            t_gamma = mean(na.omit(temp_gamma)),
+            s_gamma = mean(na.omit(spat_gamma)),
+            t_alpha = mean(na.omit(temp_alpha)),
+            s_alpha = mean(na.omit(spat_alpha)))
 
-library(lmerTest)
-summary(lmer(t_beta ~ s_beta + (1|site_code), data = st_summary, REML = FALSE))
+st_summary <- na.omit(st_summary)
 
-summary(lm(t_beta ~ s_beta, data = st_summary))
+plot(resid(lm(log(t_beta) ~ log(t_gamma), data = st_summary)) ~ c(-log(st_summary$t_alpha)))
+
+anova(lm(resid(lm(log(t_beta) ~ log(t_gamma), data = st_summary)) ~ resid(lm(log(s_beta) ~ log(s_gamma), data = st_summary))))
+
+plot(st_summary$t_beta ~ st_summary$s_beta)
+
 ```
 
 ```{r, include=FALSE}

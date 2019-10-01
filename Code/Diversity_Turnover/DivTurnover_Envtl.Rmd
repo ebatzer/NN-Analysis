@@ -91,7 +91,7 @@ Temporal resources:
 # Defining % Annual Taxa
 ann_cov <- cover %>% 
   filter(year_trt == 0 & live == 1) %>%
-  group_by(site_code) %>%
+  group_by(site_code, block) %>%
   summarise(total_cover = sum(max_cover),
             ann_cover = sum(max_cover[local_lifespan == "ANNUAL"])) %>%
   mutate(ann_frac = ann_cover / total_cover) %>%
@@ -100,11 +100,11 @@ ann_cov <- cover %>%
 # General site characteristics
 site_summary <- plot.descriptions %>% 
   filter(year_trt == 0) %>%
-  select(site_code, elevation, managed, burned, grazed, anthropogenic, latitude, MAP_v2, MAT_v2) %>%
+  select(site_code, block, elevation, managed, burned, grazed, anthropogenic, latitude, MAP_v2, MAT_v2, ANN_TEMP_RANGE_v2, MAP_VAR_v2, site_richness, TEMP_VAR_v2) %>%
   distinct()
             
 # Joining together
-site_summary = site_summary %>% inner_join(ann_cov %>% select(site_code, ann_frac))
+site_summary = site_summary %>% inner_join(ann_cov %>% select(site_code, block, ann_frac))
 
 # Plotting correlations
 sitecor = cor(site_summary %>% select(-site_code) %>% na.omit())
@@ -127,11 +127,9 @@ soil.chars = soil.chars %>%
 
 # Selecting parameters of interest
 soil.stdized = soil.chars %>% 
-  select(site_code, pct_N, pct_C, ppm_P, ppm_K, pH) %>%
-  mutate_if(is.numeric, log) %>%
-  mutate_if(is.numeric, calc_zscores) %>%
+  select(site_code, block, pct_N, pct_C, ppm_P, ppm_K, pH) %>%
   na.omit() %>%
-  group_by(site_code) %>%
+  group_by(site_code, block) %>%
   summarise(mean_N = mean(pct_N),
             mean_C = mean(pct_C),
             mean_P = mean(ppm_P),
@@ -142,25 +140,20 @@ soil.stdized = soil.chars %>%
             sd_P = sd(ppm_P),
             sd_K = sd(ppm_K),
             sd_pH = sd(pH)) %>%
-  filter_all(any_vars(is.finite(.))) %>%
-  ungroup()
+  filter_all(any_vars(is.finite(.)))
  
 # Histograms of all data
-soil.stdized %>%
-  gather(key = "sd", value = "val", -site_code) %>%
-  ggplot(aes(x = val)) +
-  geom_histogram() +
-  facet_wrap(~sd, scales = "free")
-
-# Log transformation of summed sdiances seems approximately normal
-# Could summarize euclidean distance within each plot and log-transform?
-hist(log(soil.stdized$sd_K + soil.stdized$sd_K + soil.stdized$sd_P))
-
-soil.stdized <- soil.stdized[!is.infinite(rowSums(soil.stdized %>% select(-site_code))),]
-soilcor = cor(soil.stdized %>% na.omit() %>% select(sd_N, sd_P, sd_C, sd_K,
-                                      mean_N, mean_P, mean_C, mean_K, mean_pH, sd_pH))
-corrplot(soilcor, method="circle")
-diag(solve(soilcor))
+# soil.stdized %>%
+#   gather(key = "sd", value = "val", -site_code, -block) %>%
+#   ggplot(aes(x = val)) +
+#   geom_histogram() +
+#   facet_wrap(~sd, scales = "free")
+# 
+# soil.stdized <- soil.stdized[!is.infinite(rowSums(soil.stdized %>% select(-site_code))),]
+# soilcor = cor(soil.stdized %>% na.omit() %>% select(sd_N, sd_P, sd_C, sd_K,
+#                                       mean_N, mean_P, mean_C, mean_K, mean_pH, sd_pH))
+# corrplot(soilcor, method="circle")
+# diag(solve(soilcor))
 ```
 
 ```{r}
@@ -168,17 +161,16 @@ climate_summary = climate %>%
   filter(year < 2019 & 
            ppt > 0 &
            pet > 0) %>%
-  mutate(ppt = calc_zscores(log(ppt)),
-         pet = calc_zscores(log(pet))) %>%
   group_by(site_code) %>%
   summarize(sd_ppt = sd(ppt),
             sd_pet = sd(pet),
             mean_ppt = mean(ppt),
-            mean_pet = mean(pet))
+            mean_pet = mean(pet),
+            sd_wtrdef = sd(ppt - pet),
+            mean_wtrdef = mean(ppt - pet))
 
 climcor = cor(climate_summary %>% select(-site_code))
 corrplot(climcor, method="circle")
-diag(solve(climcor))
 ```
 
 ```{r}
@@ -190,12 +182,13 @@ stoichsummary = stoichrat %>% group_by(site_code) %>%
 # Joining everything together
 
 ```{r}
-full_table = full_join(site_summary, soil.stdized) %>% 
-  full_join(stoichsummary) %>% 
+full_table = full_join(soil.stdized %>% mutate(block = as.integer(block)), site_summary) %>% 
+  left_join(stoichsummary) %>% 
   full_join(climate_summary)
 
 write.csv(x = full_table ,
-          "../../Data/divturnover_explanatory.csv")
+          "../../Data/divturnover_explanatory.csv",
+          row.names = FALSE)
 ```
 
 
