@@ -25,9 +25,9 @@ way to model and interpet interactions between them.
 ```{r}
 library(tidyverse);library(data.table);library(dtplyr)
 
-specscores_full <- read.csv("../Data/specscores.csv")
+specscores_full <- read.csv("../data/specscores.csv")
 
- taxonomy <- fread('C:/Users/ebatz/Dropbox/NutNet Data/Nutnet-site-taxonomy.csv',
+taxonomy <- fread('C:/Users/ebatz/Dropbox/NutNet Data/Nutnet-site-taxonomy.csv',
                 stringsAsFactors = FALSE,
                 na.strings = c('NA','NULL'))
 
