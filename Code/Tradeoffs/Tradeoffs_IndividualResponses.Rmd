@@ -37,7 +37,6 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 library(tidyverse);library(data.table);library(dtplyr);
 library(gridExtra); library(grid); library(smatr)
 
-ttable <- fread("../../Data/tuningtable.csv")
 
 specscores_full <- read.csv("../../Data/tradeoffs_specscores.csv")
 
@@ -119,13 +118,13 @@ smadat <- full_responses %>%
   spread(key = "trt", value = "Coef")
 
 # N-P tradeoff
-smafit <- sma(trt_P ~ trt_N * functional_group, smadat)
-NP_plot <- smafit$groupsummary %>%
+smafit_NP <- sma(trt_P ~ trt_N * functional_group, smadat)
+NP_plot <- smafit_NP$groupsummary %>%
   ggplot() +
   geom_abline(aes(slope = Slope,
              intercept = Int,
              color = group),
-             data = smafit$groupsummary,
+             data = smafit_NP$groupsummary,
              size = 1) +
   geom_point(aes(x = trt_N,
                  y = trt_P,
@@ -141,13 +140,13 @@ NP_plot <- smafit$groupsummary %>%
   theme(legend.position="bottom")
 
 # N-K tradeoff
-smafit <- sma(trt_K ~ trt_N * functional_group, smadat)
-NK_plot <- smafit$groupsummary %>%
+smafit_NK <- sma(trt_K ~ trt_N * functional_group, smadat)
+NK_plot <- smafit_NK$groupsummary %>%
   ggplot() +
   geom_abline(aes(slope = Slope,
              intercept = Int,
              color = group),
-             data = smafit$groupsummary,
+             data = smafit_NK$groupsummary,
              size = 1) +
   geom_point(aes(x = trt_N,
                  y = trt_K,
@@ -163,13 +162,13 @@ NK_plot <- smafit$groupsummary %>%
   theme(legend.position="bottom")
 
 # P-K tradeoff
-smafit <- sma(trt_K ~ trt_P * functional_group, smadat)
-PK_plot <- smafit$groupsummary %>%
+smafit_PK <- sma(trt_K ~ trt_P * functional_group, smadat)
+PK_plot <- smafit_PK$groupsummary %>%
   ggplot() +
   geom_abline(aes(slope = Slope,
              intercept = Int,
              color = group),
-             data = smafit$groupsummary,
+             data = smafit_PK$groupsummary,
              size = 1) +
   geom_point(aes(x = trt_P,
                  y = trt_K,
@@ -205,6 +204,23 @@ ggsave("../../Figures/SMAfits.pdf",
        width = 12)
 ```
 
+```{r}
+smafit_NK <- sma(trt_K ~ trt_N * functional_group, smadat, multcomp = TRUE, multcompmethod = "adjusted")
+smafit_NP <- sma(trt_P ~ trt_N * functional_group, smadat, multcomp = TRUE, multcompmethod = "adjusted")
+smafit_PK <- sma(trt_K ~ trt_P * functional_group, smadat, multcomp = TRUE, multcompmethod = "adjusted")
+
+SMA_summary <- bind_rows(list(data.frame(pair = "NP", smafit_NP$groupsummary),
+               data.frame(pair = "NK", smafit_NK$groupsummary),
+               data.frame(pair = "PK", smafit_PK$groupsummary))) %>%
+  select(pair, group, n, r2, pval, Slope)
+  
+write.csv(x = SMA_summary,
+          "../../Data/SMA_summary.csv")
+```
+
+
+
+
 # Conducting a PCA
 
 ```{r}
@@ -227,19 +243,19 @@ ggsave("../../Figures/tradeoffs_pcplot.jpeg", height = 6, width = 4)
 ```{r}
 library(plot3D)
 pc1_loadings <- pc$rotation[,1]
-pc1_fit <- data.frame(t((pc1_loadings) %*% t(c(-25, 20))))
+pc1_fit <- data.frame(t((pc1_loadings) %*% t(c(-30, 30))))
 colnames(pc1_fit) = c("N", "P", "K")
 
-theta = 30
+theta = 40
 phi = 30
 
 # jpeg("../Figures/3dviz.jpeg", height = 5, width = 6)
 
 scatter3D(z = smadat$trt_N, x = smadat$trt_P, y = smadat$trt_K, pch = 19, cex = 1,
-      theta = theta, phi = phi, col = "blue",
-      xlab = "P Response", ylab = "K Response", zlab = "N Response",
-      main = "Overall Treatment Responses", alpha = .25, colkey = FALSE, ticktype = "detailed")
+      theta = theta, phi = phi, col = "black",
+      xlab = "P Response", ylab = "K Response", zlab = "N Response", type = "h",
+      main = "Overall Treatment Responses", alpha = .1, colkey = FALSE, ticktype = "detailed")
 
 scatter3D(z = pc1_fit$N, x = pc1_fit$P, y = pc1_fit$K, pch = 19, lwd = 2,
-      theta = theta, phi = phi, col = "black", add = TRUE, type = "l", lty = 2)
+      theta = theta, phi = phi, col = "red", add = TRUE, type = "l", lty = 2)
 ```

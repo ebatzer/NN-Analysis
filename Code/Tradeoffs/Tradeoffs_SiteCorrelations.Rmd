@@ -1,0 +1,133 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r, message = FALSE, echo = FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+library(tidyverse);library(data.table);library(dtplyr);
+library(gridExtra); library(grid); library(smatr)
+```
+
+
+# Reading in datasets
+
+```{r}
+dot_full = read.csv("../../Data/dot_full.csv")
+
+site_vars = read.csv("../../Data/SEM_table.csv")
+
+var_subset <- site_vars %>% 
+  select(site_code, spatial_cv_biomass, MAP_VAR_v2, site_richness) %>%
+  group_by(site_code) %>%
+  summarise_all(mean)
+
+dot_full <- inner_join(dot_full, var_subset, by = c("site" = "site_code"))
+
+```
+
+# Creating dataframe of explanatory variables
+
+```{r, height = 8, width = 15}
+# NP Correlation
+p1 <- dot_full %>% 
+  ggplot(aes(x = site_richness,
+             y = NP,
+             fill = trt_N < 0.05 & trt_P < 0.05,
+             color = trt_N < 0.05 & trt_P < 0.05)) +
+  geom_point(shape = 21, color = "black", size = 3) +
+  stat_smooth(method = "lm", se = FALSE) +
+  ggtitle("Site Species Pool") +
+  guides(color = FALSE, fill = FALSE)
+
+p2 <- dot_full %>% 
+  ggplot(aes(x = MAP_VAR_v2,
+             y = NP,
+             fill = trt_N < 0.05 & trt_P < 0.05,
+             color = trt_N < 0.05 & trt_P < 0.05)) +
+  geom_point(shape = 21, color = "black",  size = 3) +
+  stat_smooth(method = "lm", se = FALSE) +
+  ggtitle("Site MAP Variation")+
+  guides(color = FALSE, fill = FALSE)
+
+p3 <- dot_full %>% 
+  ggplot(aes(x = spatial_cv_biomass,
+             y = NP,
+             fill = trt_N < 0.05 & trt_P < 0.05,
+             color = trt_N < 0.05 & trt_P < 0.05)) +
+  geom_point(shape = 21, color = "black", size = 3) +
+  stat_smooth(method = "lm", se = FALSE)+
+  ggtitle("Site Spatial Heterogeneity")+
+  guides(color = FALSE, fill = FALSE)
+
+# NP Correlation
+p4 <- dot_full %>% 
+  ggplot(aes(x = site_richness,
+             y = NK,
+             fill = trt_N < 0.05 & trt_K < 0.05,
+             color = trt_N < 0.05 & trt_K < 0.05)) +
+  geom_point(shape = 21, color = "black", size = 3) +
+  stat_smooth(method = "lm", se = FALSE) +
+  ggtitle("Site Species Pool")+
+  guides(color = FALSE, fill = FALSE)
+
+p5 <- dot_full %>% 
+  ggplot(aes(x = MAP_VAR_v2,
+             y = NK,
+             fill = trt_N < 0.05 & trt_K < 0.05,
+             color = trt_N < 0.05 & trt_K < 0.05)) +
+  geom_point(shape = 21, color = "black", size = 3) +
+  stat_smooth(method = "lm", se = FALSE) +
+  ggtitle("Site MAP Variation")+
+  guides(color = FALSE, fill = FALSE)
+
+p6 <- dot_full %>% 
+  ggplot(aes(x = spatial_cv_biomass,
+             y = NK,
+             fill = trt_N < 0.05 & trt_K < 0.05,
+             color = trt_N < 0.05 & trt_K < 0.05)) +
+  geom_point(shape = 21, color = "black", size = 3) +
+  stat_smooth(method = "lm", se = FALSE) +
+  ggtitle("Site Spatial Heterogeneity")+
+  guides(color = FALSE, fill = FALSE)
+
+# NP Correlation
+p7 <- dot_full %>% 
+  ggplot(aes(x = site_richness,
+             y = PK,
+             fill = trt_K < 0.05 & trt_P < 0.05,
+             color = trt_K < 0.05 & trt_P < 0.05)) +
+  geom_point(shape = 21, color = "black", size = 3) +
+  stat_smooth(method = "lm", se = FALSE) +
+  ggtitle("Site Species Pool")+
+  guides(color = FALSE, fill = FALSE)
+
+p8 <- dot_full %>% 
+  ggplot(aes(x = MAP_VAR_v2,
+             y = PK,
+             fill = trt_K < 0.05 & trt_P < 0.05,
+             color = trt_K < 0.05 & trt_P < 0.05)) +
+  geom_point(shape = 21, color = "black", size = 3) +
+  stat_smooth(method = "lm", se = FALSE) +
+  ggtitle("Site MAP Variation")+
+  guides(color = FALSE, fill = FALSE)
+
+p9 <- dot_full %>% 
+  ggplot(aes(x = spatial_cv_biomass,
+             y = PK,
+             fill = trt_K < 0.05 & trt_P < 0.05,
+             color = trt_K < 0.05 & trt_P < 0.05)) +
+  geom_point(shape = 21, color = "black", size = 3) +
+  stat_smooth(method = "lm", se = FALSE) +
+  ggtitle("Site Spatial Heterogeneity")+
+  guides(color = FALSE, fill = FALSE)
+
+# Putting it together
+
+grid.arrange(p1, p2, p3, p4, p5, p6, p7, p8, p9)
+
+```
+
+
+

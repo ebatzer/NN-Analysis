@@ -32,6 +32,7 @@ min_yr_trt <- 5 # Number of years minimum to be included in analysis
 
 # Number of iterations in RRPP
 num_iter <- 9999
+
 ```
 
 ```{r}
@@ -67,8 +68,24 @@ attr.mat$trt_K[attr.mat$year_trt == 0] = 0
 attr.mat$trt_P[attr.mat$year_trt == 0] = 0
 attr.mat$trt_N[attr.mat$year_trt == 0] = 0
 
+
+# Creating dataset of sites used in the analysis
+sites_df <- left_join(attr.mat %>% select(site_code, plot, year), site.attr, by = c("site_code", "plot", "year")) %>% 
+  group_by(site_code) %>%
+  summarise(site_name = unique(site_name),
+            continent = unique(continent),
+            country = unique(country),
+            n_years = length(unique(year)),
+            n_obs = n(),
+            first_nutrient_year = unique(first_nutrient_year)) %>%
+  filter(!(site_code%in% c("doane.us", "pape.de", "sevi.us")))
+
+write.csv("../../Data/tradeoffs_selectedsites.csv",
+          x = sites_df)
+
 # Cleaning workspace
 rm(cover.wide, cover.vals)
+            
 ```
 
 
@@ -219,36 +236,50 @@ dot_full = left_join(site_pvals %>% select(-Total, -Residuals), dotoutput) %>%
 write.csv(x = dot_full, "../../Data/dot_full.csv")
 ```
 
-```{r, fig.height = 7, fig.width = 7}
+```{r, fig.height = 8, fig.width = 4}
 dot_full <- read.csv("../../Data/dot_full.csv")
 
 p1 = dot_full %>% # filter(trt_N < .05 & trt_P < .05) %>%
   ggplot(aes(x = NP,
              fill = trt_N < 0.05 & trt_P < .05)) +
-  geom_histogram(color = "black", position = position_dodge()) +
+  geom_histogram(aes(y = ..count..), color = "black", alpha = .5, position = "identity", bins = 25,
+                 data = dot_full %>% filter(trt_N < .05 & trt_P < .05)) +
+  geom_histogram(aes(y = -..count..), color = "black", alpha = .5, position = "identity", bins = 25,
+                 data = dot_full %>% filter(!(trt_N < .05 & trt_P < .05))) +
   xlim(-1, 1) +
-  ggtitle("NP Correlation") +
-  guides(fill = FALSE)
+  ggtitle("N - P Correlation") +
+  guides(fill = FALSE) +
+  scale_y_continuous(limits = c(-4,4), breaks = seq(-6, 6, by = 2), labels = abs( seq(-6, 6, by = 2))) +
+  geom_text(aes(x = -.25, y = 3.5), label = "Both vectors significant (p < 0.05)", color = "turquoise4") +
+  geom_text(aes(x = -.25, y = -3.5), label = "=< 1 vectors significant (p < 0.05)", color = "tomato2")
 
 p2 = dot_full %>% # filter(trt_N < .05 & trt_K < .05) %>%
   ggplot(aes(x = NK,
              fill = trt_N < 0.05 & trt_K < .05)) +
-  geom_histogram(color = "black", position = position_dodge()) +
+  geom_histogram(aes(y = ..count..), color = "black", alpha = .5, position = "identity", bins = 25,
+                 data = dot_full %>% filter(trt_K < .05 & trt_N < .05)) +
+  geom_histogram(aes(y = -..count..), color = "black", alpha = .5, position = "identity", bins = 25, 
+                 data = dot_full %>% filter(!(trt_K < .05 & trt_N < .05))) +  
   xlim(-1, 1) +
-  ggtitle("NK Correlation")+
-  guides(fill = FALSE)
+  ggtitle("N - K Correlation")+
+  guides(fill = FALSE) +
+  scale_y_continuous(limits = c(-4,4), breaks = seq(-6, 6, by = 2), labels = abs( seq(-6, 6, by = 2)))
 
 p3 = dot_full %>% # filter(trt_K < .05 & trt_P < .05) %>%
   ggplot(aes(x = PK,
-             fill = trt_K < 0.05 & trt_P < .05)) +
-  geom_histogram(color = "black", position = position_dodge()) +
+             fill = trt_K < 0.05 & trt_P < .05))+
+  geom_histogram(aes(y = ..count..), color = "black", alpha = .5, position = "identity", bins = 25,
+                 data = dot_full %>% filter(trt_K < .05 & trt_P < .05)) +
+  geom_histogram(aes(y = -..count..), color = "black", alpha = .5, position = "identity", bins = 25,
+                 data = dot_full %>% filter(!(trt_K < .05 & trt_P < .05))) +
   xlim(-1, 1) +
-  ggtitle("PK Correlation")+
-  guides(fill = FALSE)
+  ggtitle("P - K Correlation")+
+  guides(fill = FALSE)+
+  scale_y_continuous(limits = c(-4, 4), breaks = seq(-6, 6, by = 2), labels = abs( seq(-6, 6, by = 2)))
 
 grid.arrange(p1,p2,p3,
              top = textGrob("Site Response Correlations",gp=gpar(fontsize=20,font=3)),
-             nrow = 2)
+             nrow = 3)
 ```
 
 ```{r}
@@ -275,7 +306,7 @@ sigtally %>% ggplot(aes(x = key,
   scale_fill_manual(values = c("cadetblue1", "cadetblue3", "cadetblue4", "gold", "gold3", "gold4", "brown3")) +
   ylim(0, 1) +
   ylab("Proportion of Sites where P < 0.05") +
-  xlab("Coefficient")
+  xlab("Coefficients")
 ```
 
 # Plotting bivariate distributions of correlation relative to other factors
@@ -290,7 +321,6 @@ site.summary <- site.attr %>%
             pretrt_simpson = mean(inverse_simpson),
             pretrt_alpha = mean(richness_vegan),
             pretrt_beta = mean(plot_beta))
-
 
 sitecor.summary <- dot_full %>%
   rename("site_code" = "site") %>%
@@ -314,3 +344,39 @@ newfunc <- function(selected_var){
 newfunc(mean_precip)  
 
 ```
+
+```{r, height = 4, width = 3}
+rdaFit = function(site){
+  com.subset <- data.frame(cover.mat)[attr.mat$site_code == site,]
+  
+  # Remove all zero columns
+  com.subset = com.subset[,colSums(com.subset) > 0]
+  
+  # Pull out relevant plot attributes for each site
+  attr.subset <- data.frame(attr.mat) %>% filter(site_code == site)
+  
+  # Check that these two matrices are the same size
+  expect_true(nrow(attr.subset) == nrow(com.subset))
+  
+  # Generate and return an NMDS figure
+  mod_out <- vegan::metaMDS(com.subset, distance = "euclidean", autotransform = FALSE, try = 50)
+  env <- envfit(mod_out, attr.subset %>% select(block, trt_N_num, trt_P_num, trt_K_num) %>% mutate(block = as.factor(block)))
+
+  # Generating GGplot
+  ggplot() + 
+    geom_point(aes(x = MDS1, y = MDS2), pch = 21, fill = "white", alpha = .5, size = 2,
+               data = data.frame(mod_out$points) * attr(mod_out$points, "internalscaling")) +
+    geom_segment(aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), data = data.frame(env$vectors$arrows), size = 2, 
+                 arrow = arrow(length = unit(0.5, "cm"), type = "closed")) +
+     geom_point(aes(x = NMDS1, y = NMDS2), data = data.frame(env$vectors$arrows), alpha = 0, size = 6) + 
+    ggrepel::geom_text_repel(aes(x = NMDS1, y = NMDS2), 
+              data = data.frame(env$vectors$arrows), 
+              label = gsub("_num", "", rownames(data.frame(env$vectors$arrows))),
+              size = 6) +
+    ggtitle(site)
+}
+
+rdaFit("rook.uk"); ggsave("../../Figures/rook_nmds.pdf", height = 5, width = 5)
+rdaFit("bnch.us"); ggsave("../../Figures/bnch_nmds.pdf", height = 5, width = 5)
+```
+
