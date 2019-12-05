@@ -9,9 +9,6 @@ output:
 
 Compiled on `r date()`
 
-### Questions for working group:
-
-* How to deal with sites that have missing observations for one year? Just proceed as usual?
 
 ```{r, message = FALSE, echo = FALSE}
 knitr::opts_chunk$set(warning = FALSE, message = FALSE,fig.width = 5, fig.height = 3.5)
@@ -28,23 +25,14 @@ library(dtplyr) #Dplyr for data.table
 
 ```{r}
 # Biomass data
-biomass_data <- fread("../Data/comb-by-plot-16-July-2019.csv",
+biomass_data <- fread("../../Data/comb-by-plot-02-August-2019.csv",
                   stringsAsFactors = FALSE,
                   na.strings = c('NA','NULL'))
 
 # Cover
-cover <- fread('../Data/full-cover-16-July-2019.csv',
+cover <- fread('../../Data/full-cover-02-August-2019.csv',
                   stringsAsFactors = FALSE,
                   na.strings = c('NA','NULL'))
-
-# Soil characteristics
-soil.chars <- read.csv("../Data/soil-nutrients-21-February-2019.csv",
-                              stringsAsFactors = FALSE)
-
-# Site covariates
-site.covars <- read.csv("../Data/site_covars.csv",
-                        stringsAsFactors = FALSE)
-
 # Analysis parameters
 min_yr_trt <- 5 # Number of years minimum to be included in analysis
 ```
@@ -59,14 +47,17 @@ biomass_data$trt <- factor(biomass_data$trt)
 # Generate table of sites by years of treatment
 sites_table <- biomass_data %>% 
   group_by(site_code,region,first_nutrient_year) %>% 
-  summarise(yrs.data = length(unique(year)),fyear = min(year), lyear = max(year)) %>% 
+  summarise(yrs.data = length(unique(year)),
+            fyear = min(year), 
+            lyear = max(year)) %>% 
   arrange(yrs.data)
 
 # Create site vector sites with at least X years of data
-sites_table.long <- as.character(sites_table[yrs.data >= min_yr_trt,`site_code`])
+sites_table.long <- sites_table['yrs.data' >= min_yr_trt, 'site_code']
+sites_table.long$site_code <- as.character(sites_table.long$site_code)
 
 # Filtering cover data to just live plants
-cover.long <- cover[site_code%in%c(sites_table.long) & live==1,]
+cover.long <- cover[site_code %in% c(sites_table.long$site_code) & live==1,]
 cover.long$max_cover = as.numeric(cover.long$max_cover)
 
 # Cleaning workspace
@@ -111,7 +102,7 @@ cover.long <- left_join(site.plots.keep, cover.long)
 cover.long <- droplevels(cover.long) 
 
 # cast long into wide
-cover.wide <- dcast(cover.long,site_code+year+block+plot+trt+year_trt ~ Taxon,
+cover.wide <- reshape2::dcast(cover.long,site_code+year+block+plot+trt+year_trt ~ Taxon,
                     value.var='max_cover', 
                     fun.aggregate = sum,drop=T,fill=0)
 
@@ -153,6 +144,7 @@ unique(to_filter$site_code)
 #### Writing final data frame for analysis
 
 ```{r}
-write.csv(x = cover.wide, "../Data/cover_wide_tradeoffs.csv")
+write.csv(x = cover.wide, "../../Data/cover_wide_tradeoffs.csv")
+write.csv(x = cover.long, "../../Data/cover_long_tradeoffs.csv")
 ```
 

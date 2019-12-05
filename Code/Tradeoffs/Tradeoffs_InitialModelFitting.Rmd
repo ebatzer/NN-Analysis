@@ -3,6 +3,8 @@ title: "R Notebook"
 output: html_notebook
 ---
 
+### Loading Necessary Packages
+
 ```{r, message = FALSE, echo = FALSE}
 knitr::opts_chunk$set(warning = FALSE, message = FALSE,fig.width = 5, fig.height = 3.5)
 
@@ -12,13 +14,13 @@ library(vegan) # General ecology functions
 library(data.table) # Fast reading of data tables
 library(testthat) # Unit testing
 library(fastDummies) # Fast generation of dummy variables
-library(dtplyr) #Dplyr for data.table
+# library(dtplyr) #Dplyr for data.table
 library(RRPP) # RRPP for multivariate model fittinginsta
 library(gridExtra)
 library(grid)
 ```
 
-# Reading in dataframes
+### Reading in Dataframes
 
 ```{r}
 # Community data wide format
@@ -34,6 +36,8 @@ min_yr_trt <- 5 # Number of years minimum to be included in analysis
 num_iter <- 9999
 
 ```
+
+### Subsetting datasets to attribute and community matrices
 
 ```{r}
 # Checking that all cover values are numeric
@@ -86,8 +90,16 @@ write.csv("../../Data/tradeoffs_selectedsites.csv",
 # Cleaning workspace
 rm(cover.wide, cover.vals)
             
+write.csv("../../Data/tradeoffs_comm.csv",
+          x = cover.mat,
+          row.names = FALSE)
+
+write.csv("../../Data/tradeoffs_attr.csv",
+          x = attr.mat,
+          row.names = FALSE)
 ```
 
+### Fitting RRPP models to each site
 
 ```{r}
 output_list <- list()
@@ -236,6 +248,9 @@ dot_full = left_join(site_pvals %>% select(-Total, -Residuals), dotoutput) %>%
 write.csv(x = dot_full, "../../Data/dot_full.csv")
 ```
 
+
+### Plotting correlation between different vectors of change
+
 ```{r, fig.height = 8, fig.width = 4}
 dot_full <- read.csv("../../Data/dot_full.csv")
 
@@ -309,41 +324,7 @@ sigtally %>% ggplot(aes(x = key,
   xlab("Coefficients")
 ```
 
-# Plotting bivariate distributions of correlation relative to other factors
-
-```{r}
-site.summary <- site.attr %>%
-  group_by(site_code) %>%
-  filter(year_trt == 0) %>%
-  summarise(total_richness = unique(site_richness),
-            mean_precip = mean(MAP_v2),
-            mean_pet = mean(PET),
-            pretrt_simpson = mean(inverse_simpson),
-            pretrt_alpha = mean(richness_vegan),
-            pretrt_beta = mean(plot_beta))
-
-sitecor.summary <- dot_full %>%
-  rename("site_code" = "site") %>%
-  select(site_code, NP, NK, PK) %>%
-  left_join(site.summary, by = "site_code") %>%
-  gather(value = "corval",
-         key = "cortype",
-         NP, NK, PK)
-
-newfunc <- function(selected_var){
-  xvar = ensym(selected_var)
-
-  sitecor.summary %>%
-    ggplot(aes(x = !!xvar,
-               y = corval,
-               color = cortype)) +
-    geom_point()+
-    stat_smooth(method = "lm", se = FALSE)
-}
-
-newfunc(mean_precip)  
-
-```
+### Visualizing Example Communities
 
 ```{r, height = 4, width = 3}
 rdaFit = function(site){
@@ -378,5 +359,11 @@ rdaFit = function(site){
 
 rdaFit("rook.uk"); ggsave("../../Figures/rook_nmds.pdf", height = 5, width = 5)
 rdaFit("bnch.us"); ggsave("../../Figures/bnch_nmds.pdf", height = 5, width = 5)
+```
+
+### Summarising communities by functional group abundance
+
+```{r}
+
 ```
 

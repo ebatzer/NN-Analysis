@@ -1,0 +1,131 @@
+---
+title: "Tradeoffs_SiteCovars"
+author: "Evan Batzer"
+date: "December 2, 2019"
+output: html_document
+---
+
+### Loading in Datasets
+
+```{r}
+library(tidyverse); library(purrr); library(testthat)
+
+comm_long <- read.csv("../../Data/cover_long_tradeoffs.csv", row.names = 1, stringsAsFactors = FALSE)
+
+site_stats <- read.csv("../../Data/comb-by-plot-02-August-2019.csv", stringsAsFactors = FALSE)
+
+coef_est <- read.csv("../../Data/tradeoffs_specscores.csv", row.names = 1, stringsAsFactors = FALSE)
+```
+
+### Functional Group Cover
+
+```{r}
+valid_fg <- c("GRASS", "FORB", "LEGUME", "WOODY", "NULL")
+
+fg_table <- comm_long %>% 
+  filter(functional_group %in% valid_fg & live == 1) %>%
+  filter(year_trt == 0) %>%
+  group_by(site_code, functional_group) %>%
+  summarise(tot_cov = mean(max_cover)) %>%
+  spread(key = functional_group, value = tot_cov)
+
+fg_table[is.na(fg_table)] <- 0
+
+fg_div <- fg_table %>% ungroup %>%
+  transmute(site_code = site_code,
+            fg_h2 = vegan::diversity(.[,-1], index = "invsimpson"))
+```
+
+### Response coefficients
+
+```{r}
+coef_table <- coef_est %>% 
+  gather(key = "species", value = "resp", - site, - trt) %>%
+  spread(key = "trt", value = "resp") %>%
+  filter(!(trt_K == 0 & trt_N == 0 & trt_P == 0))
+
+scalar1 <- function(x) {x / sqrt(sum(x^2))}
+
+list_std <- function(x) {data.frame(apply(x, FUN = scalar1, MARGIN = 2))}
+
+coef_std <- bind_rows(lapply(split(coef_table[,-c(1:2)], coef_table$site), list_std)) %>%
+  bind_cols(coef_table[,1:2]) %>%
+  select(site, species, everything())
+
+expect_true(var(colSums(coef_std[,3:5] ^ 2)) == 0)
+expect_true(unique(colSums(coef_std[,3:5] ^ 2)) == length(unique(coef_table$site)))
+```
+
+#### PCA of responses
+
+```{r}
+# the fuction to assess the significance of the principal components.
+sign.pc<-function(x,R=1000,s=10, cor=T,...){
+  # run PCA
+  pc.out<-princomp(x,cor=cor,...)
+  # the proportion of variance of each PC
+  pve=(pc.out$sdev^2/sum(pc.out$sdev^2))[1:s]
+
+  # a matrix with R rows and s columns that contains
+  # the proportion of variance explained by each pc
+  # for each randomization replicate.
+  pve.perm<-matrix(NA,ncol=s,nrow=R)
+  for(i in 1:R){
+    # permutation each column
+    x.perm<-apply(x,2,sample)
+    # run PCA
+    pc.perm.out<-princomp(x.perm,cor=cor,...)
+    # the proportion of variance of each PC.perm
+    pve.perm[i,]=(pc.perm.out$sdev^2/sum(pc.perm.out$sdev^2))[1:s]
+  }
+  # calcalute the p-values
+  pval<-apply(t(pve.perm)>pve,1,sum)/R
+  return(list(pve=pve,pval=pval))
+}
+
+pc_decomp <- function(x){
+  pca_decomp <- princomp(scale(x))
+  pc_out <- data.frame(pc1 = (pca_decomp$sdev[[1]] ^ 2) / sum(pca_decomp$sdev^2),
+             pc2 = (pca_decomp$sdev[[2]] ^ 2) / sum(pca_decomp$sdev^2),
+             pc3 = (pca_decomp$sdev[[3]] ^ 2) / sum(pca_decomp$sdev^2),
+             tot = sum(pca_decomp$sdev^2),
+             pc1_pval = sign.pc(x)$pval[[1]])
+  return(pc_out)
+}
+
+pc_decomp <- bind_rows(lapply(split(coef_std[,-c(1:2)], coef_std$site), pc_decomp)) %>%
+  bind_cols(site = unique(coef_std$site)) %>%
+  select(site, everything())
+
+pc_decomp %>%
+  ggplot(aes(x = pc1,
+             fill = pc1_pval < 0.05)) +
+  geom_histogram(alpha = .2, position = position_identity(), color = "black") +
+  xlab("Variance Captured by PC1")
+
+```
+
+### Plotting relationships
+
+```{r}
+
+site_div <- site_stats %>% group_by(site_code) %>%
+  filter(year_trt == 0) %>%
+  summarise(div = unique(site_richness),
+              llim = mean(na.omit(as.numeric(proportion_par))))
+
+pc_plot <- left_join(fg_div, pc_decomp, by = c("site_code" = "site")) %>%
+  left_join(site_div, by = c("site_code" = "site_code")) %>%
+  left_join(fg_table)
+  
+pc_plot %>% ggplot(aes(x = fg_h2,
+             y = pc1)) +
+  geom_point() +
+  stat_smooth(method = "lm") +
+  xlab("Functional Diversity @ T0") +
+  ylab("Proportion of Variance in PC1")
+
+summary(lm(pc1 ~ sqrt(I(LEGUME / (FORB + GRASS + LEGUME + WOODY))), data = pc_plot))
+
+```
+
