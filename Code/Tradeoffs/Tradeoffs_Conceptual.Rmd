@@ -1,0 +1,107 @@
+---
+title: "Tradeoffs Conceptual Figure"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r, fig.height=4.5, fig.width = 6}
+library(MASS); library(plot3D); library(ggfortify); library(rgl)
+
+n_samp <- 20
+cov_avg <- .9
+dim <- 3
+
+covmat <- matrix(rep(cov_avg, dim ^ 2), nrow = 3)
+diag(covmat) <- 1
+
+norm_samp <- data.frame(mvrnorm(n = n_samp, mu = rep(0, dim), Sigma = covmat))
+names(norm_samp) <- c("N", "P", "K")
+
+# 3D Plot
+plot3d(norm_samp, col="black", box = TRUE, size = 10, axes = FALSE, xlab = "", ylab = "", zlab = "")
+ellips <- ellipse3d(covmat, 
+            centre=c(0,0,0), level = 0.95)
+plot3d(ellips, col = "grey", alpha = 0.2, add = TRUE, box = FALSE, axes = TRUE)
+box3d()
+axes3d(edges = c("x--", "y--", "z-+"))
+title3d(xlab = "N Response", ylab = "P Response")
+mtext3d("K Response", "z-+", line = 2)
+
+# Pairwise Plots
+par(mfrow = c(2,2))
+plot(norm_samp$N, norm_samp$P, xlab = "N", ylab = "P", pch = 19, cex = 1.2)
+plot(x= NULL, xlim = c(-1, 1), ylim = c(-1,1), axes = FALSE, ann = FALSE)
+text(x = 0, y = 0, labels = paste("Average Response \n Correlation:", cov_avg), cex = 1.5)
+plot(norm_samp$N, norm_samp$K, xlab = "N", ylab = "K", pch = 19, cex = 1.2)
+plot(norm_samp$P, norm_samp$K, xlab = "P", ylab = "K", pch = 19, cex = 1.2)
+```
+
+
+```{r, fig.height=3, fig.width = 3}
+# PC Decomposition
+pc_decomp <- prcomp(norm_samp)
+data.frame(x = c(1, 2, 3), y = summary(pc_decomp)$importance[2,]) %>%
+  ggplot(aes(x = x,
+             y = y)) +
+  geom_point(size = 2) +
+  geom_line() + 
+  ylim(0, 1) +
+  theme_bw() +
+  ylab("Proportion of Variance Explained") +
+  xlab("") +
+  scale_x_continuous(breaks = c(1,2,3),
+                     labels = c("PC1", "PC2", "PC3"))
+```
+
+```{r, fig.height=6, fig.width = 7}
+n_samp <- 20
+cov_avg <- 0
+dim <- 3
+
+covmat <- matrix(rep(cov_avg, dim ^ 2), nrow = 3)
+diag(covmat) <- 1
+
+norm_samp <- data.frame(mvrnorm(n = n_samp, mu = rep(0, dim), Sigma = covmat))
+names(norm_samp) <- c("N", "P", "K")
+
+# 3D Plot
+plot3d(norm_samp, col="black", box = TRUE, size = 10, axes = FALSE, 
+       xlab = "", ylab = "", zlab = "")
+ellips <- ellipse3d(covmat, 
+            centre=c(0,0,0), level = 0.95)
+plot3d(ellips, col = "grey", alpha = 0.2, add = TRUE, box = FALSE, axes = TRUE)
+box3d()
+axes3d(edges = c("x--", "y--", "z-+"))
+title3d(xlab = "N Response", ylab = "P Response")
+mtext3d("K Response", "z-+", line = 2)
+```
+
+
+```{r, fig.height=4.5, fig.width = 6}
+# Pairwise Plots
+par(mfrow = c(2,2))
+plot(norm_samp$N, norm_samp$P, xlab = "N", ylab = "P", pch = 19, cex = 1.2)
+plot(x= NULL, xlim = c(-1, 1), ylim = c(-1,1), axes = FALSE, ann = FALSE)
+text(x = 0, y = 0, labels = paste("Average Response \n Correlation:", cov_avg), cex = 1.5)
+plot(norm_samp$N, norm_samp$K, xlab = "N", ylab = "K", pch = 19, cex = 1.2)
+plot(norm_samp$P, norm_samp$K, xlab = "P", ylab = "K", pch = 19, cex = 1.2)
+
+```
+
+```{r, fig.height=3, fig.width = 3}
+# PC Decomposition
+pc_decomp <- prcomp(norm_samp)
+data.frame(x = c(1, 2, 3), y = summary(pc_decomp)$importance[2,]) %>%
+  ggplot(aes(x = x,
+             y = y)) +
+  geom_point(size = 2) +
+  geom_line() + 
+  ylim(0, 1) +
+  theme_bw() +
+  ylab("Proportion of Variance Explained") +
+  xlab("") +
+  scale_x_continuous(breaks = c(1,2,3),
+                     labels = c("PC1", "PC2", "PC3"))
+```
+

@@ -1,0 +1,190 @@
+---
+title: "Filtering Observations Check"
+output:
+  html_document:
+    df_print: paged
+---
+Compiled on `r date()`
+
+To check for the robustness of our results to rare and extreme observations, I've re-run our core analysis using various methods of filtering observations. By summarizing basic statistics on species average cover and incidence in across plots within sites, I've generated a filtering table that can be used to exclude certain observations. 
+
+5 types of filtering used:  
+
+* Species occupancy in control plot observations  
+* Species occupancy in all observations  
+* Species mean cover in control plots observations  
+* Species mean cover in all observations  
+* Species occupancy in all treatment types within a site  
+
+For the no-filtered version and each type of filtering, I've produced the same principal components decomposition of species responses, associated eigenvalues, and a plot of PC2 vs. PC3 scores that may be used to illustrate potential functional group differences in response. I didn't show this figure in our previous meeting, but core take-aways would come from correlated responses of functional groups to different loadings, such as higher legume responses to P than other nutrients.  
+
+__Note that the filtering process then feeds into a standardization to preserve variance across the different axes. Observations may change their position within the PC2 vs. PC3 plot__
+
+Generally, I see few changes to the core result when applying this filtering. Loadings of the different treatments on the first eigenvector are all positive and roughly the same magnitude. Species positions along the 2nd and 3rd PC axes can change with filtering, but most key results are consistent -- e.g. legumes have generally distinct scores on the second PC vs. other functional groups.
+
+
+```{r, message = FALSE, echo = FALSE, warning = FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+library(tidyverse); library(data.table);library(dtplyr);
+library(gridExtra); library(grid); library(smatr)
+library(plot3D); library(ggfortify); library(rgl)
+
+specscores_full <- read.csv("../../Data/tradeoffs_specscores.csv", row.names = 1)
+
+specscores_long <- specscores_full %>%
+  gather(key = "Taxon", value = "Coef", - site, - trt) %>%
+  mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
+  mutate(Taxon = str_trim(Taxon)) %>%
+  rename("site_code" = "site")
+
+cover <- fread('../../Data/full-cover-02-August-2019.csv',
+               stringsAsFactors = FALSE,
+               na.strings = c('NA','NULL'))
+
+specfilters <- read.csv("../../Data/tradeoffs_species_filtering.csv", row.names = 1)
+
+taxonomy <- cover %>% 
+  filter(Family != "NULL" & N_fixer != "NULL") %>%
+  group_by(site_code, Taxon) %>%
+  summarise(ps_path = unique(ps_path),
+            functional_group = unique(functional_group),
+            N_fixer = unique(N_fixer)) %>%
+  mutate(functional_group = case_when(functional_group == "GRAMINOID" ~ "Graminoid",
+                                      functional_group == "GRASS" ~ "Graminoid",
+                                      functional_group == "LEGUME" ~ "Legume",
+                                      functional_group == "WOODY" ~ "Woody",
+                                      functional_group == "FORB" ~ "Forb")) %>%
+  mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
+  mutate(Taxon = str_trim(Taxon))
+
+site_pvals = read.csv("../../Data/tradeoffs_RRPP_Pvals.csv", header = TRUE, stringsAsFactors = FALSE)
+site_pvals = site_pvals %>% rename(site.K = trt_K_num, site.N = trt_N_num, site.P = trt_P_num)
+
+dot_full = read.csv("../../Data/dot_full.csv")
+```
+
+```{r,  message = FALSE, echo = FALSE}
+full_responses = specscores_long %>% 
+  inner_join(taxonomy) %>% 
+  inner_join(specfilters, by = c("site_code", "Taxon"))
+
+smadat <- full_responses %>%
+  spread(key = "trt", value = "Coef")
+```
+
+## No filtering
+
+```{r}
+pc <- prcomp(scale(smadat %>% select(trt_N, trt_K, trt_P)))
+
+cat(paste("Number of observations =", nrow(smadat)))
+
+summary(pc)
+pc$rotation
+
+# data.frame(x = c(1, 2, 3), y = summary(pc)$importance[2,]) %>%
+#   ggplot(aes(x = x,
+#              y = y)) +
+#   geom_point(size = 2) +
+#   geom_line() + 
+#   ylim(0, 1) +
+#   theme_bw() +
+#   ylab("Proportion of Variance Explained") +
+#   xlab("") +
+#   scale_x_continuous(breaks = c(1,2,3),
+#                      labels = c("PC1", "PC2", "PC3"))
+
+# ggsave("../../Figures/tradeoffs_pcplot.jpeg", height = 3, width = 2)
+
+autoplot(pc, x = 2, y = 3, data = smadat, colour = "functional_group", 
+         loadings = TRUE, loadings.label = TRUE, frame = TRUE) +
+  ggtitle("No filtering")
+
+```
+
+## Filtering by occupancy in control
+
+```{r}
+newdat = smadat %>% filter(Occ_Control > 0.33)
+
+cat(paste("Number of observations =", nrow(newdat)))
+
+pc <- prcomp(scale(newdat %>% select(trt_N, trt_K, trt_P)))
+
+summary(pc)
+pc$rotation
+
+autoplot(pc, x = 2, y = 3, data = newdat, colour = "functional_group", 
+         loadings = TRUE, loadings.label = TRUE, frame = TRUE) +
+  ggtitle("Filtering by >0.33 occupancy in control")
+```
+
+## Filtering by occupancy in all plots
+
+```{r}
+newdat = smadat %>% filter(Occ_Total > 0.33)
+
+cat(paste("Number of observations =", nrow(newdat)))
+
+pc <- prcomp(scale(newdat %>% select(trt_N, trt_K, trt_P)))
+
+summary(pc)
+pc$rotation
+
+autoplot(pc, x = 2, y = 3, data = newdat, colour = "functional_group", 
+         loadings = TRUE, loadings.label = TRUE, frame = TRUE) +
+  ggtitle("Filtering by >0.33 occupancy across all observations")
+```
+
+## Filtering by average cover in control
+
+```{r}
+newdat = smadat %>% filter(Cov_Control > 4)
+
+cat(paste("Number of observations =", nrow(newdat)))
+
+pc <- prcomp(scale(newdat %>% select(trt_N, trt_K, trt_P)))
+
+summary(pc)
+pc$rotation
+
+autoplot(pc, x = 2, y = 3, data = newdat, colour = "functional_group", 
+         loadings = TRUE, loadings.label = TRUE, frame = TRUE) +
+  ggtitle("Filtering by >4% cover in control")
+
+```
+
+## Filtering by average cover in all plots
+
+```{r}
+newdat = smadat %>% filter(Cov_Total > 4)
+
+cat(paste("Number of observations =", nrow(newdat)))
+
+pc <- prcomp(scale(newdat %>% select(trt_N, trt_K, trt_P)))
+
+summary(pc)
+pc$rotation
+
+autoplot(pc, x = 2, y = 3, data = newdat, colour = "functional_group", 
+         loadings = TRUE, loadings.label = TRUE, frame = TRUE) +
+  ggtitle("Filtering by >4% cover across all observations")
+```
+
+## Filtering by presence in all treatments
+
+```{r}
+newdat = smadat %>% filter(All_Trts)
+
+cat(paste("Number of observations =", nrow(newdat)))
+
+pc <- prcomp(scale(newdat %>% select(trt_N, trt_K, trt_P)))
+
+summary(pc)
+pc$rotation
+
+autoplot(pc, x = 2, y = 3, data = newdat, colour = "functional_group", 
+         loadings = TRUE, loadings.label = TRUE, frame = TRUE) +
+  ggtitle("Filtering by occupancy in all treatments across all observations")
+```

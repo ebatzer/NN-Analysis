@@ -34,27 +34,27 @@ of features that can also be used to subset the dataset prior to conducting thes
 ```{r, message = FALSE, echo = FALSE}
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 
-library(tidyverse);library(data.table);library(dtplyr);
+library(tidyverse); library(data.table);library(dtplyr);
 library(gridExtra); library(grid); library(smatr)
+library(plot3D); library(ggfortify); library(rgl)
 
-
-specscores_full <- read.csv("../../Data/tradeoffs_specscores.csv")
+specscores_full <- read.csv("../../Data/tradeoffs_specscores.csv", row.names = 1)
 
 specscores_long <- specscores_full %>%
-  select(-X) %>%
   gather(key = "Taxon", value = "Coef", - site, - trt) %>%
   mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
   mutate(Taxon = str_trim(Taxon)) %>%
   rename("site_code" = "site")
 
-# taxonomy <- fread('C:/Users/ebatz/Dropbox/NutNet Data/Nutnet-site-taxonomy.csv',
-#                stringsAsFactors = FALSE,
-#                na.strings = c('NA','NULL'))
+cover <- fread('../../Data/full-cover-02-August-2019.csv',
+               stringsAsFactors = FALSE,
+               na.strings = c('NA','NULL'))
 
-cover <- fread('../../Data/full-cover-02-August-2019.csv')
+specfilters <- read.csv("../../Data/tradeoffs_species_filtering.csv", row.names = 1)
 
-taxonomy <- cover %>% group_by(site_code, Taxon) %>%
-  filter(!is.null(Family)) %>%
+taxonomy <- cover %>% 
+  filter(Family != "NULL" & N_fixer != "NULL") %>%
+  group_by(site_code, Taxon) %>%
   summarise(ps_path = unique(ps_path),
             functional_group = unique(functional_group),
             N_fixer = unique(N_fixer)) %>%
@@ -73,50 +73,32 @@ dot_full = read.csv("../../Data/dot_full.csv")
 ```
 
 ```{r}
-full_responses = specscores_long %>% inner_join(taxonomy) %>% filter(!is.na(functional_group))
-```
 
-# Plotting relationships
+plot(density(specfilters$Occ_Total))
 
-Across all three fertilization treatment pairs (N-P, N-K, and P-K), responses
-seem to be quite correlated. I've only showed correlations between the response
-to N enrichment (trt_N) and P enrichment (trt_P):
+sum(specfilters$Occ_Total > 0.2) / nrow(specfilters)
 
-```{r}
-full_responses %>%
-  spread(key = trt, value = Coef) %>%
-  ggplot(aes(x = trt_N, y = trt_P)) +
-  geom_point(aes(color = functional_group), alpha = .4) +
-  stat_smooth(method = "lm", se = FALSE) +
-  ggtitle("All Responses") +
-  xlab("Beta_N") +
-  ylab("Beta_P")
+full_responses = specscores_long %>% 
+  inner_join(taxonomy) %>% 
+  inner_join(specfilters, by = c("site_code", "Taxon"))
 
-full_responses %>%
-  spread(key = trt, value = Coef) %>%
-  ggplot(aes(x = trt_N, y = trt_K)) +
-  geom_point(aes(color = functional_group), alpha = .4) +
-  stat_smooth(method = "lm", se = FALSE) +
-  ggtitle("All Responses") +
-  xlab("Beta_N") +
-  ylab("Beta_K")
-
-full_responses %>%
-  spread(key = trt, value = Coef) %>%
-  ggplot(aes(x = trt_P, y = trt_K)) +
-  geom_point(aes(color = functional_group), alpha = .4) +
-  stat_smooth(method = "lm", se = FALSE) +
-  ggtitle("All Responses") +
-  xlab("Beta_P") +
-  ylab("Beta_K")
+rm(taxonomy, cover)
 ```
 
 # Fitting with SMAs
 
 ```{r}
 smadat <- full_responses %>%
-  spread(key = "trt", value = "Coef")
+  ungroup() %>%
+  spread(key = "trt", value = "Coef") %>%
+  filter(Occ_Total > 0.33) %>%
+  mutate(trt_K = scale(trt_K, scale = TRUE),
+         trt_N = scale(trt_N, scale = TRUE),
+         trt_P = scale(trt_P, scale = TRUE))
+```
 
+
+```{r}
 # N-P tradeoff
 smafit_NP <- sma(trt_P ~ trt_N * functional_group, smadat)
 NP_plot <- smafit_NP$groupsummary %>%
@@ -130,14 +112,17 @@ NP_plot <- smafit_NP$groupsummary %>%
                  y = trt_P,
                  color = functional_group),
              data = smadat,
-             alpha = .2) +
-  xlim(-20, 20) +
-  ylim(-20, 20) +
-  xlab("N Response (%Cover / Log(Yr_Trt))") +
-  ylab("P Response (%Cover / Log(Yr_Trt))") +
+             alpha = .4,
+             size = 1.5) +
+  xlim(-6, 6) +
+  ylim(-6, 6) +
+  xlab("Standardized N Response") +
+  ylab("Standardized P Response") +
   labs(color = "Functional Group") +
-  ggtitle("N-P Tradeoff") +
-  theme(legend.position="bottom")
+  ggtitle("N-P Response Pairs") +
+  theme_bw() + 
+  theme(legend.position="bottom")+
+  theme(plot.title = element_text(size = 12, face = "bold"))
 
 # N-K tradeoff
 smafit_NK <- sma(trt_K ~ trt_N * functional_group, smadat)
@@ -152,14 +137,17 @@ NK_plot <- smafit_NK$groupsummary %>%
                  y = trt_K,
                  color = functional_group),
              data = smadat,
-             alpha = .2) +
-  xlim(-20, 20) +
-  ylim(-20, 20) +
-  xlab("N Response (%Cover / Log(Yr_Trt))") +
-  ylab("K Response (%Cover / Log(Yr_Trt))") +
+             alpha = .4,
+             size = 1.5) +
+  xlim(-6, 6) +
+  ylim(-6, 6) +
+  xlab("Standardized N Response") +
+  ylab("Standardized K Response") +
   labs(color = "Functional Group") +
-  ggtitle("N-K Tradeoff") +
-  theme(legend.position="bottom")
+  ggtitle("N-K Response Pairs") +
+  theme_bw() + 
+  theme(legend.position="bottom")+
+  theme(plot.title = element_text(size = 12, face = "bold"))
 
 # P-K tradeoff
 smafit_PK <- sma(trt_K ~ trt_P * functional_group, smadat)
@@ -174,14 +162,17 @@ PK_plot <- smafit_PK$groupsummary %>%
                  y = trt_K,
                  color = functional_group),
              data = smadat,
-             alpha = .2) +
-  xlim(-20, 20) +
-  ylim(-20, 20) +
-  xlab("P Response (%Cover / Log(Yr_Trt))") +
-  ylab("K Response (%Cover / Log(Yr_Trt))") +
+             alpha = .4,
+             size = 1.5) +
+  xlim(-6, 6) +
+  ylim(-6, 6) +
+  xlab("Standardized P Response") +
+  ylab("Standardized K Response") +
   labs(color = "Functional Group") +
-  ggtitle("P-K Tradeoff")+
-  theme(legend.position="bottom")
+  ggtitle("P-K Response Pairs")+
+  theme_bw() + 
+  theme(legend.position="bottom")+
+  theme(plot.title = element_text(size = 12, face = "bold"))
 
 
 g_legend<-function(a.gplot){
@@ -200,8 +191,8 @@ p3 <- arrangeGrob(arrangeGrob(NP_plot + theme(legend.position="none"),
 
 ggsave("../../Figures/SMAfits.pdf",
        p3,
-       height = 6,
-       width = 12)
+       height = 4,
+       width = 8)
 ```
 
 ```{r}
@@ -215,47 +206,150 @@ SMA_summary <- bind_rows(list(data.frame(pair = "NP", smafit_NP$groupsummary),
   select(pair, group, n, r2, pval, Slope)
   
 write.csv(x = SMA_summary,
-          "../../Data/SMA_summary.csv")
+           "../../Data/SMA_summary.csv")
 ```
 
 
-
-
-# Conducting a PCA
+# Conducting PCA
 
 ```{r}
-pc <- prcomp(smadat %>% select(trt_N, trt_K, trt_P))
-pc$sdev[1] / sum(pc$sdev)
-pcsummary <- summary(pc)$importance[2,]
-data.frame(pcsummary) %>%
-  ggplot(aes(x = c("PC1", "PC2", "PC3"),
-             y = pcsummary)) +
-  geom_bar(stat = "identity", fill = "white", color = "black") +
-  ylab("Proportion of Variance") +
-  xlab("Principal Component") +
-  ggtitle("PC Decomposition")
+pc <- prcomp(scale(smadat %>% select(trt_N, trt_K, trt_P)))
 
-ggsave("../../Figures/tradeoffs_pcplot.jpeg", height = 6, width = 4)
+cat(paste("Number of observations =", nrow(smadat)))
+
+summary(pc)
+pc$rotation
+
+data.frame(x = c(1, 2, 3), y = summary(pc)$importance[2,]) %>%
+  ggplot(aes(x = x,
+             y = y)) +
+  geom_point(size = 2) +
+  geom_line() +
+  ylim(0, 1) +
+  theme_bw() +
+  ylab("Proportion of Variance Explained") +
+  xlab("") +
+  scale_x_continuous(breaks = c(1,2,3),
+                     labels = c("PC1", "PC2", "PC3"))
+
+ggsave("../../Figures/tradeoffs_pcplot.jpeg", height = 3, width = 2)
+
+covmat <- cor(smadat %>% select(trt_N, trt_K, trt_P))
+
+plot3d(smadat %>% select(trt_N, trt_K, trt_P), col="black", box = TRUE, size = 8, axes = FALSE, 
+       xlab = "", ylab = "", zlab = "", xlim = c(-5, 5), ylim = c(-5, 5), zlim = c(-5, 5))
+ellips <- ellipse3d(covmat, 
+            centre=c(0,0,0), level = 0.95)
+plot3d(ellips, col = "grey", alpha = 0.2, add = TRUE, box = FALSE, axes = TRUE)
+box3d()
+axes3d(edges = c("x--", "y--", "z-+"))
+title3d(xlab = "N Response", ylab = "P Response")
+mtext3d("K Response", "z-+", line = 2)
+
+autoplot(pc, x = 2, y = 3, data = smadat, colour = "functional_group", 
+         loadings = TRUE, loadings.label = TRUE, frame = TRUE) +
+  ggtitle("PC2 vs. PC3 Axis Scores")
+
+bind_cols(data.frame(pc$x), functional_group = smadat$functional_group) %>%
+  ggplot(aes(x = PC2, fill= functional_group)) +
+  geom_density(alpha = .2)
 ```
 
-# Fitting a 3d figure
+# Within-site PCA
 
 ```{r}
-library(plot3D)
-pc1_loadings <- pc$rotation[,1]
-pc1_fit <- data.frame(t((pc1_loadings) %*% t(c(-30, 30))))
-colnames(pc1_fit) = c("N", "P", "K")
+site_names <- unique(smadat$site_code)
 
-theta = 40
-phi = 30
+global_eigenvector <- pc$rotation[,1]
 
-# jpeg("../Figures/3dviz.jpeg", height = 5, width = 6)
+output <- list()
 
-scatter3D(z = smadat$trt_N, x = smadat$trt_P, y = smadat$trt_K, pch = 19, cex = 1,
-      theta = theta, phi = phi, col = "black",
-      xlab = "P Response", ylab = "K Response", zlab = "N Response", type = "h",
-      main = "Overall Treatment Responses", alpha = .1, colkey = FALSE, ticktype = "detailed")
+counter <- 1
 
-scatter3D(z = pc1_fit$N, x = pc1_fit$P, y = pc1_fit$K, pch = 19, lwd = 2,
-      theta = theta, phi = phi, col = "red", add = TRUE, type = "l", lty = 2)
+for(site_subset in site_names){
+  
+  pc_dat <- smadat %>% 
+              filter(site_code == site_subset) %>%
+              select(trt_N, trt_K, trt_P)
+  
+  site_pca <- prcomp(pc_dat)
+  
+  prop_var <- (site_pca$sdev[1] ^ 2) /  sum(site_pca$sdev ^ 2)
+  
+  site_eigenvector <- site_pca$rotation[,1]
+  
+  site_deviance <-  acos( sum(site_eigenvector*global_eigenvector) / 
+                            ( sqrt(sum(site_eigenvector * site_eigenvector)) * 
+                                sqrt(sum(global_eigenvector * global_eigenvector)) ) ) * 
+    (180/pi)
+     
+     if(site_deviance > 90){
+       site_deviance = 180 - site_deviance
+     }
+  
+  output[[counter]] <- data.frame(site_code = site_subset,
+                            prop_var = prop_var,
+                            site_deviance = round(site_deviance,2))
+  
+  counter <- counter + 1
+}
+
+
+
+p1 <- bind_rows(output) %>%
+  left_join(site_pvals, by = c("site_code" = "site")) %>%
+  ggplot(aes(x = prop_var)) +
+  geom_histogram(color = "black") +
+  theme_bw() +
+  xlim(0,1) +
+  xlab("Proportion of Variance") + 
+  ylab("Frequency") +
+  ggtitle("Variance Captured by PC1")+
+  theme(plot.title = element_text(size = 12, face = "bold"))
+
+p2 <- bind_rows(output) %>%
+  left_join(site_pvals, by = c("site_code" = "site")) %>%
+  ggplot(aes(x = site_deviance)) +
+  geom_histogram(color = "black") +
+  theme_bw() +
+  xlim(0,90) +
+  xlab("Angle (Deg)") + 
+  ylab("Frequency") +
+  ggtitle("Angle Relative to Global PC1") +
+  theme(plot.title = element_text(size = 12, face = "bold"))
+
+p3 <- arrangeGrob(arrangeGrob(p1, p2,
+                         nrow=1), nrow=2,heights=c(10, 1))
+
+ggsave("../../Figures/site_char.pdf",
+       p3,
+       height = 4,
+       width = 6)
+
+
+bind_rows(output) %>%
+  left_join(site_pvals, by = c("site_code" = "site")) %>%
+  ggplot(aes(x = site_deviance, y= prop_var)) +
+  geom_point(color = "black") +
+  theme_bw() +
+  xlim(0,90) +
+  xlab("Angle (Deg)") + 
+  ylab("Frequency") +
+  ggtitle("Angle Relative to Global PC1") +
+  theme(plot.title = element_text(size = 12, face = "bold"))
+
 ```
+
+```{r}
+rep_specs <- smadat %>% group_by(Taxon) %>% summarise(count = n()) %>% filter(count > 4)
+
+smadat %>% inner_join(rep_specs) %>%
+  select(Taxon, site_code, trt_K, trt_N, trt_P) %>%
+  pivot_longer(cols = c("trt_K", "trt_N", "trt_P")) %>%
+  ggplot(aes(x = Taxon,
+             y = value,
+             color = name)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90))
+```
+

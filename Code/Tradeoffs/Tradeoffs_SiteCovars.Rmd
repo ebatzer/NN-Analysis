@@ -15,6 +15,10 @@ comm_long <- read.csv("../../Data/cover_long_tradeoffs.csv", row.names = 1, stri
 site_stats <- read.csv("../../Data/comb-by-plot-02-August-2019.csv", stringsAsFactors = FALSE)
 
 coef_est <- read.csv("../../Data/tradeoffs_specscores.csv", row.names = 1, stringsAsFactors = FALSE)
+
+cover.mat <- read.csv("../../Data/tradeoffs_comm.csv")
+
+attr.mat <- read.csv("../../Data/tradeoffs_attr.csv")
 ```
 
 ### Functional Group Cover
@@ -103,6 +107,33 @@ pc_decomp %>%
   geom_histogram(alpha = .2, position = position_identity(), color = "black") +
   xlab("Variance Captured by PC1")
 
+meanvals <- pc_decomp %>%
+  pivot_longer(cols = c("pc1", "pc2", "pc3"),names_to = "PC_Axis", values_to = "PC_Prop") %>%
+  group_by(PC_Axis) %>%
+  summarise(mean_prop = mean(PC_Prop))
+
+pc_decomp %>%
+  pivot_longer(cols = c("pc1", "pc2", "pc3"),names_to = "PC_Axis", values_to = "PC_Prop") %>%
+  ggplot(aes(x = as.numeric(as.factor(PC_Axis)),
+             y = PC_Prop,
+             color = site)) +
+  geom_point() +
+  geom_line(alpha = .3) +
+  geom_line(data = meanvals, aes(y = mean_prop, color = NULL), lwd = 2) +
+  guides(color = FALSE)
+```
+
+### Comparing PCA responses to RDA object
+
+```{r}
+chosen_site <- "ping.au"
+
+com_subset <- cover.mat[attr.mat$site_code == chosen_site,]
+attr_subset <- attr.mat[attr.mat$site_code == chosen_site,]
+
+rda_test <- vegan::rda(com_subset ~ trt_K_num + trt_P_num + trt_N_num + Condition(as.factor(block), as.factor(year)), data = attr_subset)
+
+summary(rda_test)$concont
 ```
 
 ### Plotting relationships
@@ -112,7 +143,8 @@ pc_decomp %>%
 site_div <- site_stats %>% group_by(site_code) %>%
   filter(year_trt == 0) %>%
   summarise(div = unique(site_richness),
-              llim = mean(na.omit(as.numeric(proportion_par))))
+            llim = mean(na.omit(as.numeric(proportion_par))),
+            mean_biomass = mean(na.omit(as.numeric(total_mass))))
 
 pc_plot <- left_join(fg_div, pc_decomp, by = c("site_code" = "site")) %>%
   left_join(site_div, by = c("site_code" = "site_code")) %>%
@@ -124,8 +156,6 @@ pc_plot %>% ggplot(aes(x = fg_h2,
   stat_smooth(method = "lm") +
   xlab("Functional Diversity @ T0") +
   ylab("Proportion of Variance in PC1")
-
-summary(lm(pc1 ~ sqrt(I(LEGUME / (FORB + GRASS + LEGUME + WOODY))), data = pc_plot))
 
 ```
 

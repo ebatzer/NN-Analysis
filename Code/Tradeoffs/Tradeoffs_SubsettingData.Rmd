@@ -9,7 +9,6 @@ output:
 
 Compiled on `r date()`
 
-
 ```{r, message = FALSE, echo = FALSE}
 knitr::opts_chunk$set(warning = FALSE, message = FALSE,fig.width = 5, fig.height = 3.5)
 
@@ -26,13 +25,14 @@ library(dtplyr) #Dplyr for data.table
 ```{r}
 # Biomass data
 biomass_data <- fread("../../Data/comb-by-plot-02-August-2019.csv",
-                  stringsAsFactors = FALSE,
-                  na.strings = c('NA','NULL'))
+                      stringsAsFactors = FALSE,
+                      na.strings = c('NA','NULL'))
 
 # Cover
 cover <- fread('../../Data/full-cover-02-August-2019.csv',
-                  stringsAsFactors = FALSE,
-                  na.strings = c('NA','NULL'))
+               stringsAsFactors = FALSE,
+               na.strings = c('NA','NULL'))
+
 # Analysis parameters
 min_yr_trt <- 5 # Number of years minimum to be included in analysis
 ```
@@ -103,8 +103,8 @@ cover.long <- droplevels(cover.long)
 
 # cast long into wide
 cover.wide <- reshape2::dcast(cover.long,site_code+year+block+plot+trt+year_trt ~ Taxon,
-                    value.var='max_cover', 
-                    fun.aggregate = sum,drop=T,fill=0)
+                              value.var='max_cover', 
+                              fun.aggregate = sum,drop=T,fill=0)
 
 # Cleaning workspace
 rm(sps, unwanted.sps, site.plots.keep)
@@ -141,10 +141,75 @@ to_filter = cover.wide %>%
 unique(to_filter$site_code)
 ```
 
-#### Writing final data frame for analysis
+#### Writing final data frames for analysis
 
 ```{r}
-write.csv(x = cover.wide, "../../Data/cover_wide_tradeoffs.csv")
-write.csv(x = cover.long, "../../Data/cover_long_tradeoffs.csv")
+# write.csv(x = cover.wide, "../../Data/cover_wide_tradeoffs.csv")
+# write.csv(x = cover.long, "../../Data/cover_long_tradeoffs.csv")
+```
+
+#### Summarising species attributes at each site
+
+Potential filtering categories:
+
+* Mean overall cover
+* Mean cover in control
+* Max overall cover
+* Total occupancy
+* Occupancy in control
+
+Note: Must correct for zero observations when calculating mean and max values, so multiplying mean cover by occupancy (operation is linear, so order shouldn't matter)
+
+```{r}
+# Tabulating statistics by species
+spec_stats <- cover.long %>%
+  group_by(site_code, trt, Taxon) %>%
+  
+  # Total number of observations by treatment and site, and mean cover
+  summarise(n_obs = n(),
+            mean_cover = mean(max_cover)) %>%
+  
+  # Pivot the above variablesto wide format (makes other manipulations easier)
+  pivot_wider(names_from = trt,
+              values_from = c(mean_cover, n_obs)) %>%
+  
+  # Replace NA's with 0
+  replace(., is.na(.), 0)
+
+# Tabulate number of observations in each site -- by block, so comparable with above. Defines maximum number of possible observations
+site_obs <- cover.long %>%
+  ungroup() %>%
+  select(site_code, year, block) %>%
+  distinct() %>%
+  group_by(site_code) %>%
+  summarise(total_obs = n())
+
+# Finalize calculations
+specfilters <- full_join(site_obs, spec_stats) %>%
+  
+  # Define the number of observation variables as fractions of total potential observations
+  mutate_at(vars(contains("n_obs")), funs(. / total_obs)) %>%
+  
+  # Correct mean cover by multiplying by this fraction of potential observation
+  mutate(mean_cover_Control = mean_cover_Control * n_obs_Control,
+         mean_cover_P = mean_cover_P * n_obs_P,
+         mean_cover_K = mean_cover_K * n_obs_K,
+         mean_cover_N = mean_cover_N * n_obs_N) %>%
+  
+  # Species found in all plots at least once
+  mutate(alltrts = (rowSums(select(., contains("n_obs")) > 0)) == 4) %>%
+  
+  # Finalize the dataset by selecting desired variables
+  transmute(site_code = site_code,
+            Taxon = Taxon,
+            Total_Obs = total_obs,
+            Occ_Control = n_obs_Control,
+            Occ_Total = rowMeans(select(., contains("n_obs"))),
+            Cov_Control = mean_cover_Control,
+            Cov_Total = rowMeans(select(., contains("mean_cover"))),
+            All_Trts = alltrts)
+
+# write.csv(x = specfilters, "../../Data/tradeoffs_species_filtering.csv")
+
 ```
 
