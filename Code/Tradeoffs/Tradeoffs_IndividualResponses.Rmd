@@ -43,8 +43,8 @@ specscores_full <- read.csv("../../Data/tradeoffs_specscores.csv", row.names = 1
 specscores_long <- specscores_full %>%
   gather(key = "Taxon", value = "Coef", - site, - trt) %>%
   mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
-  mutate(Taxon = str_trim(Taxon)) %>%
-  rename("site_code" = "site")
+  mutate(Taxon = tolower(str_trim(Taxon))) %>%
+  rename("site_code" = "site") 
 
 cover <- fread('../../Data/full-cover-02-August-2019.csv',
                stringsAsFactors = FALSE,
@@ -53,18 +53,21 @@ cover <- fread('../../Data/full-cover-02-August-2019.csv',
 specfilters <- read.csv("../../Data/tradeoffs_species_filtering.csv", row.names = 1)
 
 taxonomy <- cover %>% 
-  filter(Family != "NULL" & N_fixer != "NULL") %>%
+  # filter(Family != "NULL" & N_fixer != "NULL") %>%
   group_by(site_code, Taxon) %>%
   summarise(ps_path = unique(ps_path),
-            functional_group = unique(functional_group),
-            N_fixer = unique(N_fixer)) %>%
+            functional_group = unique(functional_group)[1],
+            N_fixer = unique(N_fixer)[1]) %>%
   mutate(functional_group = case_when(functional_group == "GRAMINOID" ~ "Graminoid",
                                       functional_group == "GRASS" ~ "Graminoid",
                                       functional_group == "LEGUME" ~ "Legume",
                                       functional_group == "WOODY" ~ "Woody",
                                       functional_group == "FORB" ~ "Forb")) %>%
   mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
-  mutate(Taxon = str_trim(Taxon))
+  mutate(Taxon = tolower(str_trim(Taxon)))
+
+write.csv(taxonomy,
+          "../../Data/tradeoffs_taxonomy.csv")
 
 site_pvals = read.csv("../../Data/tradeoffs_RRPP_Pvals.csv", header = TRUE, stringsAsFactors = FALSE)
 site_pvals = site_pvals %>% rename(site.K = trt_K_num, site.N = trt_N_num, site.P = trt_P_num)
@@ -99,6 +102,8 @@ smadat <- full_responses %>%
 
 
 ```{r}
+limit = 4 
+
 # N-P tradeoff
 smafit_NP <- sma(trt_P ~ trt_N * functional_group, smadat)
 NP_plot <- smafit_NP$groupsummary %>%
@@ -114,8 +119,8 @@ NP_plot <- smafit_NP$groupsummary %>%
              data = smadat,
              alpha = .4,
              size = 1.5) +
-  xlim(-6, 6) +
-  ylim(-6, 6) +
+  xlim(-limit, limit) +
+  ylim(-limit, limit) +
   xlab("Standardized N Response") +
   ylab("Standardized P Response") +
   labs(color = "Functional Group") +
@@ -139,8 +144,8 @@ NK_plot <- smafit_NK$groupsummary %>%
              data = smadat,
              alpha = .4,
              size = 1.5) +
-  xlim(-6, 6) +
-  ylim(-6, 6) +
+  xlim(-limit, limit) +
+  ylim(-limit, limit) +
   xlab("Standardized N Response") +
   ylab("Standardized K Response") +
   labs(color = "Functional Group") +
@@ -164,8 +169,8 @@ PK_plot <- smafit_PK$groupsummary %>%
              data = smadat,
              alpha = .4,
              size = 1.5) +
-  xlim(-6, 6) +
-  ylim(-6, 6) +
+  xlim(-limit, limit) +
+  ylim(-limit, limit) +
   xlab("Standardized P Response") +
   ylab("Standardized K Response") +
   labs(color = "Functional Group") +

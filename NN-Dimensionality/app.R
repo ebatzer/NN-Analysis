@@ -11,16 +11,22 @@ library(shiny); library(tidyverse); library(plot3D);
 library(ggrepel); library(ggpmisc); library(DT); library(shinythemes)
 
 # Reading in datasets
+SS_pvals <- read.csv("Data/tradeoffs_RRPP_Pvals_Summary.csv", row.names = 1) %>%
+  
+  filter(site != "saline.us")
 
-SS_pvals <- read.csv("Data/tradeoffs_RRPP_Pvals_Summary.csv", row.names = 1)
-
-specscores_full <- read.csv("Data/tradeoffs_specscores_long.csv", row.names = 1) 
-
-specscores <- specscores_full %>%
-  filter(Occ_Total > 0.33)
+specscores <- read.csv("Data/tradeoffs_specscores_long.csv", row.names = 1)   %>%
+  
+  filter(site != "saline.us")
 
 sitenames <- as.character(unique(SS_pvals$site))
   
+# Creating the projection matrix
+dim1 <- c(1, 1, 1) / sqrt(sum(c(1, 1, 1)^2))
+dim2 <- c(0, -1, 1) / sqrt(sum(c(0, -1, 1)^2))
+dim3 <- c(-1, .5, .5) / sqrt(sum(c(-1, .5, .5)^2))
+
+projmat <- matrix(c(dim1, dim2, dim3), nrow = 3)
 
 # Define UI for application that draws a histogram
 ui <- fixedPage(theme = shinytheme("readable"),
@@ -53,7 +59,7 @@ ui <- fixedPage(theme = shinytheme("readable"),
          br(),
          h2("Pairwise Comparisons of Species Responses"),
          br(),
-         "Following model fitting, treatment coefficients were extracted to estimate species responses to nutrient enrichment. Below shows a visualization of these fitted coefficients, filtered to just those species occurring in >33% of all community observations within a site. This figure can be manipulated to show pairwise contrasts (if two different variables are selected), or a dot plot displaying the magnitude of response organized alphabetically (if both selected variables are the same). Points are colored by functional group.",
+         "Following model fitting, treatment coefficients were extracted to estimate species responses to nutrient enrichment. Below shows a visualization of these fitted coefficients, filtered to just those species occurring in >20% of all community observations within a site. This figure can be manipulated to show pairwise contrasts (if two different variables are selected), or a dot plot displaying the magnitude of response organized alphabetically (if both selected variables are the same). Points are colored by functional group.",
          br(), br(),
          "Are treatments with correlated patterns of community change (positive or negative slopes) as expected?",
          br(), br()),
@@ -76,17 +82,14 @@ ui <- fixedPage(theme = shinytheme("readable"),
          br(),
          "To visualize differences in estimated response trajectories, 3D visualizations of filtered treatment response coefficients are presented below. In this figure, each point corresponds to the estimated change in cover (at the log2 scale) for each species within a site, per log(year) of treatment.",
          br(), br(),
-         "A best fit line generated through principal components decomposition is highlighted in black. The best fit line generated from data across all sites is presented as a dashed line. To better assess how a site's patterns deviate from this global average, the angle of difference between vectors is presented below.",
+         "The 1:1:1 line presented illustrates a one-dimensional (neutral) expectation of nutrient enrichment response, where species responses are consistent across all nutrient types. Differences between species observed responses and their projection on this line are highlighted by dashed lines.",
          br(), br(),
-         "The right panel shows a screeplot of the proportion of variance captured by different principal components. Larger variance captured by PC1 indicates more 1-dimensional patterns than variance spread equally across all three PCs.",
-         br(), br()          
+         "Total variance of species responses captured by this projection will range between 0-1. When this neutral expectation fails to characterized response patterns, observed responses will deviate strongly from this 1:1:1 line (variance captured = 0); consistently one-dimensional responses across species will fall largely long this 1:1:1 line (variance captured = 1)."
   ),
-  fixedRow(  withMathJax(),
-             column(8, 
-                    plotOutput('threedviz'),
-                    textOutput('formula')),
-             column(4, 
-                    plotOutput('screeplot'))
+  fixedRow(column(12, align = "center",
+                  plotOutput('threedviz', height = 500, width = 500),
+                  br(), br(),
+                  textOutput('formula'))
   ),
   
   column(12,
@@ -108,8 +111,10 @@ ui <- fixedPage(theme = shinytheme("readable"),
 server <- function(input, output) {
    
    output$SStable <- renderTable({
+     
       # subset rows
       ss_row <- SS_pvals[SS_pvals$site == input$selected_site,]
+      
       ss_row %>% 
         mutate(P_value = format.pval(P_Value, digits = 3))
 
@@ -117,91 +122,84 @@ server <- function(input, output) {
    
    output$threedviz <- renderPlot({
 
-     # All site PCA
-     as_PCA <- prcomp(scale(specscores %>% dplyr::select(trt_N, trt_K, trt_P)))
-
      # Filter Site Dat
-     sitedat <- specscores %>% filter(site == input$selected_site)
+     sitedat <- specscores %>% 
+       
+       filter(site == input$selected_site) %>%
+       
+       filter(Occ_Total > 0.2) %>%
+       
+       # Rescaling responses
+       mutate(trt_K = scale(trt_K, scale = TRUE),
+              trt_N = scale(trt_N, scale = TRUE),
+              trt_P = scale(trt_P, scale = TRUE)) 
 
-     # Site-level PCA
-     site_PCA <- prcomp(scale(sitedat %>% dplyr::select(trt_N, trt_K, trt_P)))
+     # 1:1:1 Projection
+     site_proj <- data.frame(as.matrix(sitedat %>% select(trt_N, trt_P, trt_K)) %*% projmat)[,1] / sqrt(3)
      
+     # Plotting parameters
+     max_line <- (matrix(c(-3,3,-3,3,-3,3),
+                        nrow = 2) %*% projmat)[,1] / sqrt(3)
      theta = 40
      phi = 30
      
-     pc1_loadings <- site_PCA$rotation[,1]
-     pc1_fit <- data.frame(t((pc1_loadings) %*% t(c(-4, 4))))
-     names(pc1_fit) <- names(pc1_loadings)
-     
-     all_pc1_loadings <- as_PCA$rotation[,1]
-     all_pc1_fit <- data.frame(t((all_pc1_loadings) %*% t(c(-4, 4))))
-     names(all_pc1_fit) <- names(all_pc1_loadings)
-     
-     # par(mfrow = c(2,1))
-     
      par(mar = c(2, 2, 2, 0))
      
-     scatter3D(z = sitedat$trt_N, x = sitedat$trt_P, y = sitedat$trt_K, pch = 19, cex = 1,
+     scatter3D(z = sitedat$trt_N, x = sitedat$trt_P, y = sitedat$trt_K, pch = 19, cex = 2,
                theta = theta, phi = phi, xlim = c(-3, 3), ylim = c(-3,3), zlim = c(-3,3),
-               xlab = "P Response", ylab = "K Response", zlab = "N Response", type = "p",
+               xlab = "Stdized P Response", ylab = "Stdized K Response", zlab = "Stdized N Response", type = "p",
                main = "Site-Level Treatment Responses", 
                colkey = FALSE, ticktype = "detailed",
                col = "black")
      
-     scatter3D(z = pc1_fit$trt_N, x = pc1_fit$trt_P, y = pc1_fit$trt_K, pch = 19, lwd = 2,
-               theta = theta, phi = phi, col = "black", add = TRUE, type = "l", lty = 1)
+     for(i in 1:length(site_proj)){
+       scatter3D(z = c(site_proj[i], sitedat$trt_N[i]), 
+                 x = c(site_proj[i], sitedat$trt_P[i]), 
+                 y = c(site_proj[i], sitedat$trt_K[i]), pch = 19, lwd = 2,
+                 theta = theta, phi = phi, col = "grey40", add = TRUE, type = "l", lty = 2)
+     }
+
      
-     scatter3D(z = all_pc1_fit$trt_N, x = all_pc1_fit$trt_P, y = all_pc1_fit$trt_K, pch = 19, lwd = 2,
-               theta = theta, phi = phi, col = "grey40", add = TRUE, type = "l", lty = 2)
+     scatter3D(z = max_line, x = max_line, y = max_line, pch = 19, lwd = 2,
+               theta = theta, phi = phi, col = "black", add = TRUE, type = "l", lty = 1)
      
    })
    
    output$formula <- renderText({
      
-     # All site PCA
-     as_PCA <- prcomp(scale(specscores %>% dplyr::select(trt_N, trt_K, trt_P)))
+     sitedat <- specscores %>% 
+       
+       filter(site == input$selected_site) %>%
+       
+       filter(Occ_Total > 0.2) %>%
+       
+       # Rescaling responses
+       mutate(trt_K = scale(trt_K, scale = TRUE),
+              trt_N = scale(trt_N, scale = TRUE),
+              trt_P = scale(trt_P, scale = TRUE)) 
      
-     # Filter Site Dat
-     sitedat <- specscores %>% filter(site == input$selected_site)
      
-     # Site-level PCA
-     site_PCA <- prcomp(scale(sitedat %>% dplyr::select(trt_N, trt_K, trt_P)))
-     
-     a <- as_PCA$rotation[,1] 
-     b <- site_PCA$rotation[,1]
-     my_calculated_value <-  acos( sum(a*b) / ( sqrt(sum(a * a)) * sqrt(sum(b * b)) ) ) * (180/pi)
-     
-     if(my_calculated_value > 90){
-       my_calculated_value = 180 - my_calculated_value 
-     }
-     
-     paste("Angle between site-level and global PC vectors is ", round(my_calculated_value, 3), "degrees")
-   })
+     siteproj <- as.matrix(sitedat %>% select(trt_N, trt_P, trt_K)) %*% projmat     
+      
+     var_frac <- apply(siteproj, MARGIN = 2, function(x) sum(x^2))[1] / 
+       sum(apply(siteproj, MARGIN = 2, function(x)sum(x^2)))
    
-   output$screeplot <- renderPlot({
-     
-     # Filter Site Dat
-     sitedat <- specscores %>% filter(site == input$selected_site)
-     
-     # Site-level PCA
-     site_PCA <- prcomp(scale(sitedat %>% dplyr::select(trt_N, trt_K, trt_P)))
-     
-     data.frame(x = c(1, 2, 3), y = summary(site_PCA)$importance[2,]) %>%
-       ggplot(aes(x = x,
-                  y = y)) +
-       geom_point(size = 2) +
-       geom_line() +
-       ylim(0, 1) +
-       theme_bw() +
-       ylab("Proportion of Variance Explained") +
-       xlab("") +
-       scale_x_continuous(breaks = c(1,2,3),
-                          labels = c("PC1", "PC2", "PC3"))
+     paste("Fraction of variance in site responses captured by neutral (1:1:1) expectation:",
+           round(var_frac,3))  
    })
    
    output$specviz <- renderPlot({
      
-     sitedat <- specscores %>% filter(site == input$selected_site)
+     sitedat <- specscores %>% 
+       
+       filter(site == input$selected_site) %>% 
+       
+       filter(Occ_Total > .2) %>%
+       
+       # Rescaling responses
+       mutate(trt_K = scale(trt_K, scale = TRUE),
+              trt_N = scale(trt_N, scale = TRUE),
+              trt_P = scale(trt_P, scale = TRUE)) 
      
      X_chosen = paste("trt_", input$X_chosen, sep = "")
      Y_chosen = paste("trt_", input$Y_chosen, sep = "")
@@ -210,8 +208,8 @@ server <- function(input, output) {
        select(X_chosen, Y_chosen, Species, functional_group)
        
      chosen_dat %>% 
-       ggplot(aes(x = chosen_dat[,1],
-                  y = chosen_dat[,2],
+       ggplot(aes(x = !!sym(X_chosen),
+                  y = !!sym(Y_chosen),
                   label = Species,
                   color = functional_group)) +
        theme_minimal() + 
@@ -233,7 +231,7 @@ server <- function(input, output) {
    
    output$resptable <- renderDT({
      
-     sitedat <- specscores_full  %>% filter(site == input$selected_site) %>%
+     sitedat <- specscores %>% filter(site == as.character(input$selected_site)) %>%
        select(site, Species, trt_K, trt_P, trt_N, functional_group, Occ_Total) %>%
        mutate_if(is.numeric,  round, 4) %>%
        rename("Site Code" = "site",

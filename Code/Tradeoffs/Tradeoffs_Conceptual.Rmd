@@ -6,11 +6,13 @@ output:
 ---
 
 ```{r, fig.height=4.5, fig.width = 6}
-library(MASS); library(plot3D); library(ggfortify); library(rgl)
+library(MASS); library(plot3D); library(ggfortify); library(rgl); library(ggrepel)
 
-n_samp <- 20
-cov_avg <- .9
+n_samp <- 10
+cov_avg <- .5
 dim <- 3
+
+set.seed(3)
 
 covmat <- matrix(rep(cov_avg, dim ^ 2), nrow = 3)
 diag(covmat) <- 1
@@ -18,16 +20,94 @@ diag(covmat) <- 1
 norm_samp <- data.frame(mvrnorm(n = n_samp, mu = rep(0, dim), Sigma = covmat))
 names(norm_samp) <- c("N", "P", "K")
 
-# 3D Plot
-plot3d(norm_samp, col="black", box = TRUE, size = 10, axes = FALSE, xlab = "", ylab = "", zlab = "")
-ellips <- ellipse3d(covmat, 
-            centre=c(0,0,0), level = 0.95)
-plot3d(ellips, col = "grey", alpha = 0.2, add = TRUE, box = FALSE, axes = TRUE)
-box3d()
-axes3d(edges = c("x--", "y--", "z-+"))
-title3d(xlab = "N Response", ylab = "P Response")
-mtext3d("K Response", "z-+", line = 2)
+# Creating the projection matrix
+dim1 <- c(1, 1, 1) / sqrt(sum(c(1, 1, 1)^2))
+dim2 <- c(0, -1, 1) / sqrt(sum(c(0, -1, 1)^2))
+dim3 <- c(-1, .5, .5) / sqrt(sum(c(-1, .5, .5)^2))
 
+projmat <- matrix(c(dim1, dim2, dim3), nrow = 3)
+
+proj = as.matrix(norm_samp) %*% projmat[,1] / sqrt(3)
+
+norm_proj <- data.frame(proj, norm_samp)
+```
+
+
+```{r}
+# 3D Plot
+
+par3d(windowRect = c(30, 30, 500, 500),
+      bbox = c(-2,2,-2,2,-2,2))
+plot3d(norm_samp, col="black", box = TRUE, size = 15, axes = FALSE, xlab = "", ylab = "", zlab = "")
+# ellips <- ellipse3d(covmat, 
+#             centre=c(0,0,0), level = 0.95)
+# plot3d(ellips, col = "grey", alpha = 0.2, add = TRUE, box = FALSE, axes = TRUE)
+#box3d()
+segments3d(x=as.vector(t(norm_proj[,c(1,2)])),
+           y=as.vector(t(norm_proj[,c(1,3)])),
+           z=as.vector(t(norm_proj[,c(1,4)])))
+arrow3d(p0 = c(-2,-2,-2),
+        p1 = c(2,2,2),
+        s = 1/30)
+text3d(x = norm_samp[7,1] + .25,
+       y = norm_samp[7,2],
+       z = norm_samp[7,3] - .25,
+       texts = "Species A",
+       font = 1,
+       size = 12)
+text3d(x = norm_samp[10,1],
+       y = norm_samp[10,2],
+       z = norm_samp[10,3] + .4,
+       texts = "Species B",
+       font = 1)
+axes3d(edges = c("x--", "y--", "z-+"))
+#title3d(xlab = "N Response", ylab = "P Response")
+#mtext3d("K Response", "z-+", line = 2)
+grid3d(c("x+", "y+", "z"), lty = "dashed", n = 5)
+```
+
+```{r}
+dat_proj <- as.matrix(norm_samp) %*% projmat %>% as.data.frame()
+colnames(dat_proj) = c("Dim1", "Dim2", "Dim3")
+
+dat_proj %>%
+  ggplot(aes(x = Dim2,
+             y = Dim3)) +
+  theme_bw() +
+  xlim(-2,2) +
+  ylim(-2,2) +
+  geom_text_repel(dat = dat_proj[c(7,10),],
+            label = c("Species A", "Species B"),
+                  point.padding = 0,
+            nudge_x = c(-1, 1),
+            nudge_y = c(-.5, .5),
+                  segment.color = 'grey50') +
+  geom_segment(data = projmat, # Resizing vectors for visibility
+               aes(x = c(0,0,0),
+                   y = c(0,0,0),
+                   xend = dim2 * 2,
+                   yend = dim3* 2),
+               arrow = arrow(length = unit(0.25,"cm"),
+                             type = "closed",
+                             angle = 15)) +
+  geom_text(data = projmat, # A little extra buffer so letters aren't obscured
+            aes(x = dim2 * 2.2,
+                y = dim3 * 2.2,
+                label = c("N", "P","K")),
+            size = 6) +
+    geom_point(size = 4) +
+  xlab("Dimension 2") +
+  ylab("Dimension 3")
+
+ggsave(filename = "../../Figures/geom_d1d2.png",
+       width = 4,
+       height = 4)
+
+```
+
+ 
+
+```{r}
 # Pairwise Plots
 par(mfrow = c(2,2))
 plot(norm_samp$N, norm_samp$P, xlab = "N", ylab = "P", pch = 19, cex = 1.2)

@@ -18,18 +18,23 @@ library(vegan) # General ecology functions
 library(data.table) # Fast reading of data tables
 library(testthat) # Unit testing
 library(dtplyr) #Dplyr for data.table
+
+# Write new datasets?
+write_datasets = TRUE
 ```
 
 ### Reading in datasets
 
 ```{r}
 # Biomass data
-biomass_data <- fread("../../Data/comb-by-plot-02-August-2019.csv",
+biomass_data <- fread("../../Data/comb-by-plot-23-april-2020.csv",
                       stringsAsFactors = FALSE,
                       na.strings = c('NA','NULL'))
 
+biomass_data %>% filter(site_code == "sevi.us" & trt == "P")
+
 # Cover
-cover <- fread('../../Data/full-cover-02-August-2019.csv',
+cover <- fread('../../Data/full-cover-23-april-2020.csv',
                stringsAsFactors = FALSE,
                na.strings = c('NA','NULL'))
 
@@ -64,6 +69,17 @@ cover.long$max_cover = as.numeric(cover.long$max_cover)
 rm(sites_table, cover)
 ```
 
+### Taxonomic Adjustments from Bakker
+
+```{r}
+source("../Taxonomic.Adjustments.function.200521.R")
+
+
+```
+
+
+
+
 ### Editing datasets, converting to wide format
 
 ```{r}
@@ -73,6 +89,7 @@ cover.long <- cover.long[trt %in% c('Control','N','P','K')]
 # Clean out unknowns, non-vascular plants
 sps <- unique(cover.long$Taxon)
 unwanted.sps <- sps[c(grep('UNKNOWN',sps),grep('BRYOPHYTE',sps),grep('LICHEN',sps))]
+
 cover.long <- cover.long[!(Taxon %in% unwanted.sps | local_lifeform == 'MOSS' | functional_group == 'BRYOPHYTE')]
 
 # Removing the "GRAMINOID" functional group label, converting to just "GRASS"
@@ -86,14 +103,22 @@ cover.long[functional_group =='GRAMINOID', functional_group := 'GRASS']
 
 site.plots.keep <- cover.long %>% 
   group_by(site_code,block,plot,trt) %>% 
-  summarise(yrs.data = length(unique(year))) %>% 
+  summarise(yrs.data = max(year_trt)) %>% 
   filter(yrs.data >= min_yr_trt)
 
-site.plots.keep <- left_join(site.plots.keep,
-                             site.plots.keep %>% group_by(site_code,block,trt) %>% 
-                               summarize(min.plot = min(plot))) %>% 
-  filter(plot == min.plot) %>% 
-  select(-min.plot,-yrs.data)
+filtering_min_plot <- site.plots.keep %>% 
+  group_by(site_code,block,trt) %>% 
+  summarize(min.plot = min(plot)) %>%
+  
+  # Making species allowance for Sevilleta
+  filter(site_code != "sevi.us") %>%
+  bind_rows(site.plots.keep %>% 
+              filter(site_code == "sevi.us") %>%
+              mutate(min.plot = plot)) %>%
+  select(-plot, -yrs.data)
+
+site.plots.keep <- left_join(site.plots.keep, filtering_min_plot) %>% 
+  filter(plot == min.plot)
 
 # Joining into master long-format cover dataframe
 cover.long <- left_join(site.plots.keep, cover.long)
@@ -108,6 +133,11 @@ cover.wide <- reshape2::dcast(cover.long,site_code+year+block+plot+trt+year_trt 
 
 # Cleaning workspace
 rm(sps, unwanted.sps, site.plots.keep)
+
+if(write_datasets){
+  write.csv(x = cover.wide, "../../Data/cover_wide_tradeoffs.csv")
+  write.csv(x = cover.long, "../../Data/cover_long_tradeoffs.csv")
+}
 ```
 
 ### Summarizing available datasets
@@ -123,29 +153,6 @@ cover.wide %>%
              fill = trt)) +
   geom_histogram(alpha = .5, position = position_dodge()) +
   ggtitle("Distribution of Observations")
-
-# Table of sites with uneven distributions
-uneven_sites = cover.wide %>% 
-  group_by(site_code, trt) %>%
-  summarise(obs = n()) %>%
-  group_by(site_code) %>%
-  summarise(even_observations = n_distinct(obs)) %>%
-  filter(even_observations > 1)
-
-to_filter = cover.wide %>% 
-  group_by(site_code, trt) %>%
-  summarise(obs = n(),
-            yrtrt = max(year_trt)) %>%
-  filter(site_code %in% uneven_sites$site_code)
-
-unique(to_filter$site_code)
-```
-
-#### Writing final data frames for analysis
-
-```{r}
-# write.csv(x = cover.wide, "../../Data/cover_wide_tradeoffs.csv")
-# write.csv(x = cover.long, "../../Data/cover_long_tradeoffs.csv")
 ```
 
 #### Summarising species attributes at each site
@@ -209,7 +216,33 @@ specfilters <- full_join(site_obs, spec_stats) %>%
             Cov_Total = rowMeans(select(., contains("mean_cover"))),
             All_Trts = alltrts)
 
-# write.csv(x = specfilters, "../../Data/tradeoffs_species_filtering.csv")
+if(write_datasets){
+  write.csv(x = specfilters,
+            "../../Data/tradeoffs_species_filtering.csv")
+}
+```
 
+```{r}
+# Cover
+cover <- fread('../../Data/full-cover-23-april-2020.csv',
+               stringsAsFactors = FALSE,
+               na.strings = c('NA','NULL'))
+
+taxonomy <- cover %>% 
+  # filter(Family != "NULL" & N_fixer != "NULL") %>%
+  group_by(site_code, Taxon) %>%
+  summarise(ps_path = unique(ps_path),
+            functional_group = unique(functional_group)[1],
+            N_fixer = unique(N_fixer)[1]) %>%
+  mutate(functional_group = case_when(functional_group == "GRAMINOID" ~ "Graminoid",
+                                      functional_group == "GRASS" ~ "Graminoid",
+                                      functional_group == "LEGUME" ~ "Legume",
+                                      functional_group == "WOODY" ~ "Woody",
+                                      functional_group == "FORB" ~ "Forb")) %>%
+  mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
+  mutate(Taxon = tolower(str_trim(Taxon)))
+
+write.csv(taxonomy,
+          "../../Data/tradeoffs_taxonomy.csv")
 ```
 

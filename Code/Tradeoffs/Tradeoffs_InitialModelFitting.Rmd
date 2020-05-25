@@ -19,7 +19,10 @@ library(RRPP) # RRPP for multivariate model fittinginsta
 library(gridExtra)
 library(grid)
 library(wesanderson)
+library(VennDiagram)
 
+# Should I re-write old datasets?
+write_datasets = TRUE
 ```
 
 ### Reading in Dataframes
@@ -29,7 +32,7 @@ library(wesanderson)
 cover.wide <- read.csv("../../Data/cover_wide_tradeoffs.csv")
 
 # Site attributes
-site.attr <- read.csv("../../Data/comb-by-plot-clim-soil-diversity-02-Aug-2019.csv")
+site.attr <- read.csv("../../Data/comb-by-plot-23-april-2020.csv")
 
 # Analysis parameters
 min_yr_trt <- 5 # Number of years minimum to be included in analysis
@@ -84,21 +87,24 @@ sites_df <- left_join(attr.mat %>% select(site_code, plot, year), site.attr, by 
             n_years = length(unique(year)),
             n_obs = n(),
             first_nutrient_year = unique(first_nutrient_year)) %>%
-  filter(!(site_code%in% c("doane.us", "pape.de", "sevi.us")))
+  filter(!(site_code%in% c("doane.us", "pape.de")))
 
-write.csv("../../Data/tradeoffs_selectedsites.csv",
-          x = sites_df)
+if(write_datasets){
+  
+  write.csv("../../Data/tradeoffs_selectedsites.csv",
+            x = sites_df)
+  
+  write.csv("../../Data/tradeoffs_comm.csv",
+            x = cover.mat,
+            row.names = FALSE)
+  
+  write.csv("../../Data/tradeoffs_attr.csv",
+            x = attr.mat,
+            row.names = FALSE)
+}
 
 # Cleaning workspace
 rm(cover.wide, cover.vals)
-            
-write.csv("../../Data/tradeoffs_comm.csv",
-          x = cover.mat,
-          row.names = FALSE)
-
-write.csv("../../Data/tradeoffs_attr.csv",
-          x = attr.mat,
-          row.names = FALSE)
 ```
 
 ### Fitting RRPP models to each site
@@ -108,7 +114,7 @@ output_list <- list()
 counter <- 1
 
 sitenames = unique(attr.mat$site_code)
-sitenames = sitenames[!(sitenames %in% c("doane.us", "pape.de", "sevi.us"))]
+sitenames = sitenames[!(sitenames %in% c("doane.us", "pape.de"))]
 
 # For all unique sites selected
 for(sites in sitenames){
@@ -139,18 +145,24 @@ for(sites in sitenames){
   expect_true(nrow(attr.subset) == nrow(com.subset))
   expect_true(nrow(attr.subset) > 0)
   
-
-  mod_rrpp <- lm.rrpp(com.subset ~ year_trt + trt_K_num + trt_P_num + trt_N_num + block,
+  if(length(unique(attr.subset$block)) > 1){
+      mod_rrpp <- lm.rrpp(com.subset ~ year_trt + trt_K_num + trt_P_num + trt_N_num + block,
                       data = attr.subset,
                       SS.type = "III",
                       iter = num_iter,
                       print.progress = FALSE)
+  }else{
+      mod_rrpp <- lm.rrpp(com.subset ~ year_trt + trt_K_num + trt_P_num + trt_N_num,
+                      data = attr.subset,
+                      SS.type = "III",
+                      iter = num_iter,
+                      print.progress = FALSE)
+  }
+
 
   # Saving ouput
   output = list(siteinfo = attr.subset,
-                aovtable = anova(mod_rrpp, effect.type = "F",
-                                  error = c("Residuals", "Residuals", "Residuals",
-                                            "Residuals", "Residuals")),
+                aovtable = anova(mod_rrpp, effect.type = "F"),
                 specscores = coef(mod_rrpp))
 
   output_list[[counter]] = output
@@ -166,14 +178,15 @@ for(i in 1:length(output_list)){
   anovatab = bind_cols(site = as.character(unique(output_list[[i]]$siteinfo$site_code)),
             data.frame(matrix(output_list[[i]]$aovtable$table$`Pr(>F)`, nrow = 1)))
 
-  colnames(anovatab)[2:ncol(anovatab)] =   rownames(output_list[[i]]$aovtable$table)
+  colnames(anovatab)[2:ncol(anovatab)] = rownames(output_list[[i]]$aovtable$table)
 
   storagelist[[i]] = anovatab
 
 }
 
-write.csv(x = bind_rows(storagelist),
-  "../../Data/tradeoffs_RRPP_Pvals.csv")
+if(write_datasets){
+  write.csv(x = bind_rows(storagelist), "../../Data/tradeoffs_RRPP_Pvals.csv")
+}
 
 storagelist <- list()
 
@@ -191,8 +204,9 @@ for(i in 1:length(output_list)){
 
 }
 
-write.csv(x = bind_rows(storagelist),
-  "../../Data/tradeoffs_RRPP_Pvals_Summary.csv")
+if(write_datasets){
+  write.csv(x = bind_rows(storagelist),"../../Data/tradeoffs_RRPP_Pvals_Summary.csv")
+}
 
 storagelist <- list()
 
@@ -211,7 +225,16 @@ for(i in 1:length(output_list)){
 
 specscores_full = data.frame(bind_rows(storagelist))
 specscores_full[is.na(specscores_full)] = 0
-write.csv(specscores_full, "../../Data/tradeoffs_specscores.csv")
+
+specscores_long <- specscores_full %>% 
+  pivot_longer(cols = -c("site", "trt"), names_to = "Taxon") %>% 
+  pivot_wider(names_from = "trt", values_from = "value") %>%
+  filter(!(trt_K == 0 & trt_P == 0 & trt_N == 0))
+
+if(write_datasets){
+  write.csv(specscores_full, "../../Data/tradeoffs_specscores.csv")
+  write.csv(specscores_long, "../../Data/tradeoffs_specscores_long.csv")
+}
 ```
 
 ### Calculate dot-product of pairwise correlations
@@ -274,74 +297,25 @@ dot_full = left_join(site_pvals %>% select(-Total, -Residuals), dotoutput) %>%
   rename("trt_K" = "trt_K_num", "trt_P" =  "trt_P_num", "trt_N" = "trt_N_num")
 
 # Write final data product
-write.csv(x = dot_full, "../../Data/dot_full.csv")
+if(write_datasets){
+  write.csv(x = dot_full, "../../Data/dot_full.csv")
+}
 ```
 
 
-### Plotting correlation between different vectors of change
+```{r}
+mag_summary <- dot_full %>% select(site, N_change, P_change, K_change) %>%
+  pivot_longer(cols = -"site",
+               names_to = "trt",
+               values_to = "magnitude")
 
-```{r, fig.height = 6, fig.width = 6}
-dot_full <- read.csv("../../Data/dot_full.csv")
+library(lme4); library(lmerTest)
+summary(lmer(log(magnitude) ~ trt + (1|site), data = mag_summary))
+plot(lmer(log(magnitude) ~ trt + (1|site), data = mag_summary))
 
-p1 = dot_full %>% # filter(trt_N < .05 & trt_P < .05) %>%
-  ggplot(aes(x = NP
-             # fill = trt_N < 0.05 & trt_P < .05)
-             )) +
-  # geom_histogram(aes(y = ..count..), color = "black", alpha = .5, position = "identity", bins = 25,
-  #                data = dot_full %>% filter(trt_N < .05 & trt_P < .05)) +
-  # geom_histogram(aes(y = -..count..), color = "black", alpha = .5, position = "identity", bins = 25,
-  #                data = dot_full %>% filter(!(trt_N < .05 & trt_P < .05))) +
-  geom_histogram(aes(y = ..count..), color = "black", alpha = .5, position = "identity", bins = 25,
-                 data = dot_full, fill = wes_palette("Darjeeling1", 3)[1]) +
-  xlim(-1, 1) +
-  ggtitle("N - P Correlation") +
-  guides(fill = FALSE) + 
-  geom_vline(aes(xintercept = mean(NP)), size = 1.5)
-  # scale_y_continuous(limits = c(-4,4), breaks = seq(-6, 6, by = 2), labels = abs( seq(-6, 6, by = 2))) 
-  # geom_text(aes(x = -.25, y = 3.5), label = "Both vectors significant (p < 0.05)", color = "turquoise4") +
-  # geom_text(aes(x = -.25, y = -3.5), label = "=< 1 vectors significant (p < 0.05)", color = "tomato2")
-
-p2 = dot_full %>% # filter(trt_N < .05 & trt_K < .05) %>%
-  ggplot(aes(x = NK
-             #fill = trt_N < 0.05 & trt_K < .05)
-             )) +
-  # geom_histogram(aes(y = ..count..), color = "black", alpha = .5, position = "identity", bins = 25,
-  #                data = dot_full %>% filter(trt_K < .05 & trt_N < .05)) +
-  # geom_histogram(aes(y = -..count..), color = "black", alpha = .5, position = "identity", bins = 25, 
-  #                data = dot_full %>% filter(!(trt_K < .05 & trt_N < .05))) +  
-  geom_histogram(aes(y = ..count..), color = "black", alpha = .5, position = "identity", bins = 25,
-                 data = dot_full, fill = wes_palette("Darjeeling1", 3)[2]) +
-  xlim(-1, 1) +
-  ggtitle("N - K Correlation")+
-  guides(fill = FALSE) +
-  geom_vline(aes(xintercept = mean(NK)), size = 1.5)
-  #scale_y_continuous(limits = c(-4,4), breaks = seq(-6, 6, by = 2), labels = abs( seq(-6, 6, by = 2)))
-
-p3 = dot_full %>% # filter(trt_K < .05 & trt_P < .05) %>%
-  ggplot(aes(x = PK
-           #   fill = trt_K < 0.05 & trt_P < .05)
-         ))+
-  # geom_histogram(aes(y = ..count..), color = "black", alpha = .5, position = "identity", bins = 25,
-  #                data = dot_full %>% filter(trt_K < .05 & trt_P < .05)) +
-  # geom_histogram(aes(y = -..count..), color = "black", alpha = .5, position = "identity", bins = 25,
-  #                data = dot_full %>% filter(!(trt_K < .05 & trt_P < .05))) +
-    geom_histogram(aes(y = ..count..), color = "black", alpha = .5, position = "identity", bins = 25,
-                 data = dot_full, fill = wes_palette("Darjeeling1", 3)[3]) +
-  xlim(-1, 1) +
-  ggtitle("P - K Correlation")+
-  guides(fill = FALSE) +
-  geom_vline(aes(xintercept = mean(PK)), size = 1.5)
-  # scale_y_continuous(limits = c(-4, 4), breaks = seq(-6, 6, by = 2), labels = abs( seq(-6, 6, by = 2)))
-
-grid.arrange(p1,p2,p3,
-             top = textGrob("Site Response Correlations",gp=gpar(fontsize=20,font=3)),
-             nrow = 2)
-
-
-mean(dot_full$NK)
-mean(dot_full$NP)
-mean(dot_full$PK)
 ```
+
+
 
 ```{r}
 sigtally <- site_pvals %>% select(trt_N_num, trt_P_num, trt_K_num) %>%
@@ -377,8 +351,6 @@ list(venn_dat$trt_N_num[grep("TRUE", venn_dat$trt_N_num)],
 ### Plotting as a Venn Diagram
 
 ```{r}
-library("VennDiagram")
-
 venn_dat <- site_pvals %>% select(trt_N_num, trt_P_num, trt_K_num) %>%
   mutate_all(function(x) paste(1:length(x), x < 0.05)) 
 
@@ -430,66 +402,3 @@ myvenn <- venn.diagram(
         
 )
 ```
-
-### Visualizing Example Communities
-
-```{r, height = 4, width = 3}
-rdaFit = function(site){
-  com.subset <- data.frame(cover.mat)[attr.mat$site_code == site,]
-  
-  # Remove all zero columns
-  com.subset = com.subset[,colSums(com.subset) > 0]
-  
-  # Pull out relevant plot attributes for each site
-  attr.subset <- data.frame(attr.mat) %>% filter(site_code == site)
-  
-  # Check that these two matrices are the same size
-  expect_true(nrow(attr.subset) == nrow(com.subset))
-  
-  # Generate and return an NMDS figure
-  mod_out <- vegan::metaMDS(com.subset, distance = "euclidean", autotransform = FALSE, try = 50)
-  env <- envfit(mod_out, attr.subset %>% select(block, trt_N_num, trt_P_num, trt_K_num) %>% mutate(block = as.factor(block)))
-
-  # Generating GGplot
-  ggplot() + 
-    geom_point(aes(x = MDS1, y = MDS2), pch = 21, fill = "white", alpha = .5, size = 2,
-               data = data.frame(mod_out$points) * attr(mod_out$points, "internalscaling")) +
-    geom_segment(aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2), data = data.frame(env$vectors$arrows), size = 2, 
-                 arrow = arrow(length = unit(0.5, "cm"), type = "closed")) +
-     geom_point(aes(x = NMDS1, y = NMDS2), data = data.frame(env$vectors$arrows), alpha = 0, size = 6) + 
-    ggrepel::geom_text_repel(aes(x = NMDS1, y = NMDS2), 
-              data = data.frame(env$vectors$arrows), 
-              label = gsub("_num", "", rownames(data.frame(env$vectors$arrows))),
-              size = 6) +
-    ggtitle(site)
-}
-
-rdaFit("rook.uk"); ggsave("../../Figures/rook_nmds.pdf", height = 5, width = 5)
-rdaFit("bnch.us"); ggsave("../../Figures/bnch_nmds.pdf", height = 5, width = 5)
-```
-
-```{r}
-change_plot <- dot_full %>%
-  select(site, N_change, P_change, K_change) %>%
-  pivot_longer(c("N_change", "P_change", "K_change"),
-               names_to = "direction",
-               values_to = "covchange") %>%
-  mutate(direction = gsub("_change", "", direction)) %>%
-  ggplot(aes(x = factor(direction, levels = c("N", "P", "K")),
-             y = covchange)) +
-  geom_boxplot(aes(fill = direction), 
-               alpha = .5,
-               width = .5) +
-  ylab("Net Euclidean Change / Log(Year + 1)") +
-  xlab("Nutrient Addition Treatment") +
-  theme_bw() +
-  guides(fill = FALSE) +
-  scale_fill_manual(values = wes_palette("Darjeeling1", 3)[c(3, 1, 2)]) +
-  ylim(0, 5)
-
-ggsave(plot = change_plot,
-      filename = "../../Figures/change_plot.tiff",
-       height = 6,
-       width = 3)
-```
-

@@ -1,0 +1,593 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+### Tradeoffs - Projection Analysis
+
+
+#### Loading packages
+```{r}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+library(tidyverse); 
+library(permute); 
+library(knitr); 
+library(grid); 
+library(gridExtra); 
+library(smatr); 
+library(gtable)
+
+```
+
+
+```{r, message = FALSE, echo = FALSE}
+# Fitted species response coefficients
+specscores_full <- read.csv("../../Data/tradeoffs_specscores.csv", row.names = 1)
+
+# Transforming to long format
+specscores_long <- specscores_full %>%
+  gather(key = "Taxon", value = "Coef", - site, - trt) %>%
+  mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
+  mutate(Taxon = tolower(str_trim(Taxon))) %>%
+  rename("site_code" = "site") %>%
+  filter("site_code" != "saline.us")
+
+# Species filtering table
+specfilters <- read.csv("../../Data/tradeoffs_species_filtering.csv", row.names = 1)
+specfilters <- specfilters %>%
+  mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
+  mutate(Taxon = tolower(str_trim(Taxon))) %>%
+  filter("site_code" != "saline.us")
+
+# Taxonomic data (species functional groups, etc.)
+taxonomy <- read.csv("../../Data/tradeoffs_taxonomy.csv", row.names = 1)
+taxonomy <- taxonomy %>%
+  mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
+  mutate(Taxon = tolower(str_trim(Taxon))) %>%
+  select(-ps_path, -N_fixer)
+  filter("site_code" != "saline.us")
+
+# Permutation-based p-values from model fitting
+dot_full = read.csv("../../Data/dot_full.csv", row.names = 1)%>%
+  filter("site" != "saline.us")
+```
+ 
+```{r}
+# Assembling complete dataset for geometric analysis
+response_table <- specscores_long %>% # Joining together all datasets
+  inner_join(taxonomy) %>% 
+  inner_join(specfilters, by = c("site_code", "Taxon")) %>%
+  ungroup() %>%
+  
+  # Converting to wide format
+  spread(key = "trt", value = "Coef") %>%
+  
+  # Ordering rows by site code (alphabetically)
+  arrange(site_code) %>%
+  ungroup() %>%
+  na.omit(.)
+
+write.csv(response_table %>% rename(site = "site_code",
+                                         Species = "Taxon"),
+          "../../NN-Dimensionality/Data/tradeoffs_specscores_long.csv")
+
+  # Filtering to those species present in at least 20% of samples
+response_table <- response_table %>%
+  
+  filter(Occ_Total > 0.2) %>%
+  
+  group_by(site_code) %>%
+  
+  # Rescaling responses
+  mutate(trt_K = scale(trt_K, scale = TRUE),
+         trt_N = scale(trt_N, scale = TRUE),
+         trt_P = scale(trt_P, scale = TRUE)) 
+```
+ 
+```{r}
+# Vector projection function (from Lewandosta et al. 2016)
+vecproject <- function(x, # Vector to project 
+                       vec = c(1, 1, 1) # Vector on which to project
+                       ){
+  
+  xvec = as.numeric(x)
+  y = vec
+  
+  # Calculating magnitudes of the projection and rejection components (a, r)
+  a = sum(xvec * y) / sqrt(sum(y^2))
+  r = sqrt(sum(xvec^2))
+  
+  # "A" vector (projection)
+  avec = sum(xvec * y) / sqrt(sum(y^2)) * (y / sqrt(sum(y^2)))
+  names(avec) = c("a_N", "a_P", "a_K")
+  
+  # "B" vector (rejection)
+  bvec = c(xvec - avec)
+  names(bvec) = c("b_N", "b_P", "b_K")
+  
+  b = sqrt(sum(bvec^2))
+
+  # Calculating angle of deviance (theta)
+  if(a >= 0){
+    theta = acos(a/r) * (180 / pi)
+  }else if(a < 0){
+    theta = 180 - acos(a/r) * (180 / pi)
+  }else{
+    error("There's a problem!")
+  }
+  
+  # Assembling output list
+  output <- list(a, theta, r, b, avec, bvec)
+  names(output) = c("a", "theta", "r", "b", "avec", "bvec")
+  
+  return(output)
+}
+
+# Subset response table to response coefficient column
+resps = response_table  %>% 
+  select(trt_N, trt_P, trt_K) 
+
+# Apply vector projection function
+geom_out = apply(resps, MARGIN = 1, FUN = vecproject)
+
+# Extract first four elements of each table
+geom_table <- bind_cols(response_table %>% 
+  select(site_code, Taxon, trt_N, trt_P, trt_K),
+  bind_rows(lapply(geom_out, `[`, c(1:4))))
+
+# Assemble matrix of projection coordinates (a vector)
+avecs = data.frame(matrix(unlist(lapply(geom_out, `[`, c(5))), ncol = 3, byrow = TRUE))
+names(avecs) = names(geom_out[[1]]$avec)
+
+# Assemble matrix of rejection coordinates (b vector)
+bvecs = data.frame(matrix(unlist(lapply(geom_out, `[`, c(6))), ncol = 3, byrow = TRUE))
+names(bvecs) = names(geom_out[[1]]$bvec)
+
+# Combining together into a total geometry table
+geom_table = geom_table %>% bind_cols(avecs, bvecs)
+```
+ 
+# Question 1 - What fraction of the variance is captured by this 1:1:1 projection? How well does this compare to PCA?
+
+As one might expect, these are *astonishingly* close to one another -- 0.584% variance explained in the 1:1:1 projection, and 0.587 in the PCA version.
+
+```{r}
+
+# Calculating total variance of the projection coordinates
+proj_var <- geom_table %>% select(a_N, a_P, a_K) %>%
+  summarise(var_aN = var(a_N), 
+            var_aP = var(a_P), 
+            var_aK = var(a_K)) %>%
+  apply(MARGIN = 1, function(x) sum(x) / 3)
+
+# Compare to the proportion of variance captured by the dominant eigenvalue in PCA
+PCA_var <- prcomp(geom_table %>% select(trt_N, trt_P, trt_K))$sdev[1]^2 / 3
+
+# Significance testing:
+
+# Permutation structure
+permtest <- function(dat, nperms){
+  
+  # Define how to permute dataset - shuffle within sites
+  permControl <- how(blocks = as.factor(dat$site_code))
+  
+  # Generate matrix of permutations for each column
+  N_perm <- shuffleSet(permControl, n = nrow(dat), nset = nperms)
+  P_perm <- shuffleSet(permControl, n = nrow(dat), nset = nperms)
+  K_perm <- shuffleSet(permControl, n = nrow(dat), nset = nperms)
+  
+  # Initialize list
+  output <- list()
+  
+  for(i in 1:nperms){
+  
+    # Shuffle entries  
+    resps_temp = data.frame(dat$trt_N[N_perm[i,]],
+                            dat$trt_P[P_perm[i,]],
+                            dat$trt_K[K_perm[i,]])
+  
+    # Conduct projection
+    geom_out = apply(resps_temp, MARGIN = 1, FUN = vecproject)
+    
+    # Extract vector coordinates
+    avecs = data.frame(matrix(unlist(lapply(geom_out, `[`, c(5))), ncol = 3, byrow = TRUE))
+    names(avecs) = names(geom_out[[1]]$avec)
+  
+    # Calculate variance and compare to PCA
+    proj_var_p <- sum(apply(avecs, MARGIN = 2, var)) / 3
+    PCA_var_p <- prcomp(resps_temp)$sdev[1]^2 / 3
+  
+    # Return both variance values
+    output[[i]] <- data.frame(proj_var_p, PCA_var_p)
+  }
+  
+  return(bind_rows(output))
+
+}
+
+# Running function above
+nperm = 1000
+
+# Summarise differences between PCA and projection variance 
+perm_output <- permtest(response_table, nperm = nperm) %>%
+  mutate(diff = abs(proj_var_p - PCA_var_p))
+
+# Fraction of random samples that capture more variance than the observed 1:1:1 projection
+sum(proj_var > perm_output$proj_var_p) / nperm
+
+# Fraction of samples whose difference between 1:1:1 projection and PCA is greater than the observed
+sum(abs(proj_var - PCA_var) > perm_output$diff) / nperm
+
+```
+
+### 2-dimensional tradeoffs
+
+```{r}
+limit <- 4
+
+# N-P tradeoff
+smafit_NP <- sma(trt_P ~ trt_N * functional_group, response_table)
+NP_plot <- smafit_NP$groupsummary %>%
+  ggplot() +
+  geom_abline(aes(slope = Slope,
+             intercept = Int,
+             color = group),
+             data = smafit_NP$groupsummary,
+             size = 1) +
+  geom_point(aes(x = trt_N,
+                 y = trt_P,
+                 color = functional_group),
+             data = response_table,
+             alpha = .4,
+             size = 1.5) +
+  xlim(-limit, limit) +
+  ylim(-limit, limit) +
+  xlab("Standardized N Response") +
+  ylab("Standardized P Response") +
+  labs(color = "Functional Group") +
+  ggtitle("N-P Response Pairs") +
+  theme_bw() + 
+  theme(legend.position="bottom")+
+  theme(plot.title = element_text(size = 12, face = "bold"))
+
+# N-K tradeoff
+smafit_NK <- sma(trt_K ~ trt_N * functional_group, response_table)
+NK_plot <- smafit_NK$groupsummary %>%
+  ggplot() +
+  geom_abline(aes(slope = Slope,
+             intercept = Int,
+             color = group),
+             data = smafit_NK$groupsummary,
+             size = 1) +
+  geom_point(aes(x = trt_N,
+                 y = trt_K,
+                 color = functional_group),
+             data = response_table,
+             alpha = .4,
+             size = 1.5) +
+  xlim(-limit, limit) +
+  ylim(-limit, limit) +
+  xlab("Standardized N Response") +
+  ylab("Standardized K Response") +
+  labs(color = "Functional Group") +
+  ggtitle("N-K Response Pairs") +
+  theme_bw() + 
+  theme(legend.position="bottom")+
+  theme(plot.title = element_text(size = 12, face = "bold"))
+
+# P-K tradeoff
+smafit_PK <- sma(trt_K ~ trt_P * functional_group, response_table)
+PK_plot <- smafit_PK$groupsummary %>%
+  ggplot() +
+  geom_abline(aes(slope = Slope,
+             intercept = Int,
+             color = group),
+             data = smafit_PK$groupsummary,
+             size = 1) +
+  geom_point(aes(x = trt_P,
+                 y = trt_K,
+                 color = functional_group),
+             data = response_table,
+             alpha = .4,
+             size = 1.5) +
+  xlim(-limit, limit) +
+  ylim(-limit, limit) +
+  xlab("Standardized P Response") +
+  ylab("Standardized K Response") +
+  labs(color = "Functional Group") +
+  ggtitle("P-K Response Pairs")+
+  theme_bw() + 
+  theme(legend.position="bottom")+
+  theme(plot.title = element_text(size = 12, face = "bold"))
+
+
+g_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)}
+
+mylegend<-g_legend(NP_plot)
+
+p3 <- arrangeGrob(arrangeGrob(NP_plot + theme(legend.position="none"),
+                         NK_plot + theme(legend.position="none"),
+                         PK_plot + theme(legend.position="none"),
+                         nrow=1),
+             mylegend, nrow=2,heights=c(10, 1))
+
+ggsave("../../Figures/SMAfits.pdf",
+       p3,
+       height = 4,
+       width = 8)
+```
+
+```{r}
+smadat <- response_table %>% select(functional_group, trt_N, trt_K, trt_P) %>% na.omit(.) %>% data.frame(.)
+
+smafit_NK <- sma(trt_K ~ trt_N * functional_group, smadat, multcomp = TRUE, multcompmethod = "adjusted")
+smafit_NP <- sma(trt_P ~ trt_N * functional_group, smadat, multcomp = TRUE, multcompmethod = "adjusted")
+smafit_PK <- sma(trt_K ~ trt_P * functional_group, smadat, multcomp = TRUE, multcompmethod = "adjusted")
+
+SMA_summary <- bind_rows(list(data.frame(pair = "NP", smafit_NP$groupsummary),
+               data.frame(pair = "NK", smafit_NK$groupsummary),
+               data.frame(pair = "PK", smafit_PK$groupsummary))) %>%
+  select(pair, group, n, r2, pval, Slope)
+  
+write.csv(x = SMA_summary,
+           "../../Data/SMA_summary.csv")
+```
+
+
+
+### Creating new coordinate system for points
+
+In our three-dimensional case, another way to generate a similar procedure is project our responses onto a new coordinate system. This change of basis can be constructed to include the vector of 1's, as in the above, as well as two additonal, orthogonal dimensions.
+
+Where the first column corresponds to our 1:1:1 vector (note that all values are unit transformed), while the second and third are other orthogonal vectors that form this new basis.
+
+$$
+\left(\begin{array}{cc} 
+0.577 & 0 & -0.816\\
+0.577 & -0.707 & 0.4082\\
+0.577 & 0.707 & 0.4082
+\end{array}\right)
+$$
+
+
+```{r}
+# Creating the projection matrix
+dim1 <- c(1, 1, 1) / sqrt(sum(c(1, 1, 1)^2))
+dim2 <- c(0, -1, 1) / sqrt(sum(c(0, -1, 1)^2))
+dim3 <- c(-1, .5, .5) / sqrt(sum(c(-1, .5, .5)^2))
+
+projmat <- matrix(c(dim1, dim2, dim3), nrow = 3)
+```
+
+
+```{r}
+# Create new projection with matrix multiplication
+resp_proj <- data.frame(as.matrix(geom_table %>% select(trt_N, trt_P, trt_K)) %*% projmat)
+names(resp_proj) <- c("dim1", "dim2", "dim3")
+
+# Checking if this projection matches the above
+stopifnot(all.equal(geom_table$a, resp_proj$dim1))
+
+# Joining for plotting
+resp_proj <- resp_proj %>% bind_cols(geom_table) %>% left_join(response_table)
+
+projmat <- data.frame(projmat)
+colnames(projmat) <- c("dim1", "dim2", "dim3")
+
+# Visualizing projection on 2nd and 3rd axes
+ggplot(data = resp_proj %>% filter(functional_group != "NA"),
+       aes(x = dim2,
+           y = dim3)) +
+  theme_bw()+
+  stat_ellipse(aes(color = functional_group), size = 1.25) +
+  geom_point(aes(color = functional_group), alpha = .5, size = 2) +
+  geom_segment(data = projmat * 4, # Resizing vectors for visibility
+               aes(x = c(0,0,0),
+                   y = c(0,0,0),
+                   xend = dim2,
+                   yend = dim3)) +
+  geom_text(data = projmat * 4.2, # A little extra buffer so letters aren't obscured
+            aes(label = c("N", "P","K"))) +
+  xlim(-4,4) +
+  ylim(-4,4) +
+  xlab("Dimension 2") +
+  ylab("Dimension 3") +
+  labs(color = "Functional Group")+
+  ggtitle("Deviance from 1:1:1 Projection")
+
+ggsave(filename = "../../Figures/projection_deviance.pdf",
+       height = 5, width = 7)
+
+resp_proj %>%
+  group_by(functional_group) %>%
+  summarise(dim1_mean = round(mean(dim1),3),
+            dim2_mean = round(mean(dim2),3),
+            dim3_mean = round(mean(dim3),3)) %>%
+  t(.) %>%
+  knitr::kable(.) 
+
+anova(lm(dim3 ~ functional_group, data = resp_proj))
+
+```
+
+# 3d visualization of these responses
+
+```{r}
+library(plot3D)
+
+limit <- 4
+xlim = c(-limit, limit) 
+ylim = c(-limit, limit) 
+zlim = c(-limit, limit)
+
+max_line <- (matrix(c(xlim, ylim, zlim),
+                        nrow = 2) %*% as.matrix(projmat))[,1] / sqrt(3)
+theta = -25
+phi = 20
+
+pdf("../../Figures/allresp_3dviz.pdf",
+    height = 6,
+    width = 8)
+
+scatter3D(x = geom_table$trt_N, 
+          y = geom_table$trt_P, 
+          z = geom_table$trt_K, 
+          pch = 19, cex = .5, alpha = .25,
+          theta = theta, phi = phi, xlim = xlim, ylim = ylim, zlim = zlim,
+          ylab = "Std P Response", zlab = "Std K Response", xlab = "Std N Response", type = "p",
+          main = "Site-Level Treatment Responses", 
+          colkey = FALSE, ticktype = "detailed",
+          col = "black")
+
+scatter3D(z = max_line, x = max_line, y = max_line, pch = 19, lwd = 2,
+          theta = theta, phi = phi, col = "black", add = TRUE, type = "l", lty = 1)
+
+dev.off()
+```
+
+# What fraction of variance is captured by each  projection?
+
+Perhaps one good measure of dimensionality might be how well this projection captures the variation we see in our responses. The following might be a useful metric.
+
+```{r}
+site_dimensionality <- function(dat){
+  
+  # Variance captured by the first dimension in each site (assuming mean of 0)
+  proj_var <- sum(apply(dat %>% select(dim1),
+                        MARGIN = 2,
+                        function(x) x^2 / (length(x) - 1)))
+  
+  # Variance captured by all three dimensions in each site (assuming mean of 0)
+  tot_var <- sum(apply(dat %>% select(dim1, dim2, dim3),
+                       MARGIN = 2,
+                       function(x) x^2  / (length(x) - 1)))
+  
+  n_taxa <- nrow(dat)
+  
+  return(data.frame(site_code = unique(dat$site_code), 
+                    n_taxa,
+                    tot_var, 
+                    proj_var))
+  
+}
+
+# Calculate fraction of variance captured by the first dimension, 
+site_var <-bind_rows(lapply(split(resp_proj, resp_proj$site_code), site_dimensionality)) %>%
+  mutate(percent_captured = proj_var / tot_var ) %>%
+  arrange(desc(percent_captured)) %>%
+  left_join(dot_full, by = c("site_code" = "site")) %>%
+  mutate(all_sig = trt_N < 0.05 & trt_P < 0.05 & trt_K < 0.05)
+
+View(site_var %>% select(site_code, percent_captured) %>% arrange(site_code))
+
+site_var %>%
+  filter(site_code != "saline.us") %>%
+  ggplot(aes(x = factor(site_code, levels = site_code),
+             y = percent_captured,
+             color = as.factor(all_sig))) +
+  geom_segment(aes(y = 0, yend = percent_captured,
+                   xend = factor(site_code, levels = site_code))) +
+  geom_point() +
+  xlab("Site Code") + 
+  ylab(expression(atop("Response Dimensionality", "(% Variance Captured by Projection)"))) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  ylim(0,1) +
+  labs(color = "All Treatments Significant?") +
+  ggtitle("Variation in Site Response Dimensionality")
+```
+
+# Relating geometry to other characteristics
+
+```{r}
+sitechars <- read.csv("../../Data/comb-by-plot-clim-soil-diversity-02-Aug-2019.csv", stringsAsFactors = FALSE)
+sitechars %>% filter(site_code != "saline.us")
+
+goodsites <- sitechars %>% filter(year_trt == 0) %>%
+  group_by(site_code) %>%
+  select(site_code, year, first_nutrient_year) %>%
+  distinct() %>%
+  filter(year != first_nutrient_year)
+
+unique(site_var$site_code) %in% goodsites$site_code
+
+sitechars <- sitechars %>% 
+  filter(year_trt == 0) %>%
+  select(site_code, proportion_par, Ambient_PAR, Ground_PAR, total_mass, inverse_simpson, richness_vegan) %>% 
+  group_by(site_code) %>%
+  summarise_all(function(x) mean(na.omit(x)))
+
+site_chars <- left_join(site_var, sitechars, by = "site_code")
+```
+
+
+```{r}
+p1 <- site_chars %>% filter(all_sig == TRUE) %>%
+  ggplot(aes(x = total_mass,
+             y = percent_captured)) +
+  geom_point(size = 3) +
+  theme_bw() + 
+  stat_smooth(method = "lm", se = FALSE, color = "black", linetype = 1) +
+  ylab("Proportion Variance Captured") +
+  xlab("Pretreatment Mean Plot Biomass")
+
+p2 <- site_chars %>% filter(all_sig == TRUE) %>%
+  ggplot(aes(x = 1 - proportion_par,
+             y = percent_captured)) +
+  geom_point(size = 3) +
+  theme_bw() + 
+  stat_smooth(method = "lm", se = FALSE, color = "black", linetype = 2) +
+  ylab("Proportion Variance Captured") +
+  xlab("Pretreatment Mean % Light Interception")
+
+p3 <- site_chars %>% filter(all_sig == TRUE) %>%
+  ggplot(aes(x = richness_vegan,
+             y = percent_captured)) +
+  geom_point(size = 3) +
+  theme_bw() + 
+  stat_smooth(method = "lm", se = FALSE, color = "black", linetype = 2) +
+  ylab("Proportion Variance Captured") +
+  xlab("Pretreatment Mean Plot Richness")
+
+p4 <- site_chars %>% filter(all_sig == TRUE) %>%
+  ggplot(aes(x = inverse_simpson,
+             y = percent_captured)) +
+  geom_point(size = 3) +
+  theme_bw() + 
+  stat_smooth(method = "lm", se = FALSE, color = "black", linetype = 2) +
+  ylab("Proportion Variance Captured") +
+  xlab("Pretreatment Mean Plot Simpson Div")
+
+legend = gtable_filter(ggplotGrob(p1), "guide-box") 
+
+grid.arrange(arrangeGrob(p1 + ylab(""), 
+                         p2 + ylab(""),
+                         p3 + ylab(""),
+                         p4 + ylab(""), 
+                         nrow = 2,
+                        top =textGrob("Site Variation in Response Dimensionality",
+                                      gp=gpar(fontsize=18,font=1)),
+                         left = textGrob("Proportion Variance Captured", rot = 90, vjust = 1)))
+
+
+write.csv(site_chars %>% select(site_code, percent_captured),
+          "../../Data/variance_proportion_bysites.csv")
+
+cordf <- site_chars %>% filter(all_sig == TRUE) %>% select(site_code, percent_captured, total_mass, richness_vegan, inverse_simpson) %>% na.omit(.)
+
+library(jmuOutlier)
+
+perm.cor.test(cordf$percent_captured, cordf$total_mass)
+# perm.cor.test(cordf$percent_captured, cordf$proportion_par)
+perm.cor.test(cordf$percent_captured, cordf$richness_vegan)
+perm.cor.test(cordf$percent_captured, cordf$inverse_simpson)
+```
+
+
