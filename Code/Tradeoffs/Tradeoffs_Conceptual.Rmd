@@ -7,17 +7,12 @@ output:
 
 ```{r, fig.height=4.5, fig.width = 6}
 library(MASS); library(plot3D); library(ggfortify); library(rgl); library(ggrepel)
+norm_samp <- data.frame(N = c(.1, .8, 1),
+                        P = c(.3, .3, 1),
+                        K = c(.05, .5, 1))
 
-n_samp <- 10
-cov_avg <- .5
-dim <- 3
+norm_samp <- data.frame(apply(norm_samp, MARGIN = 2, FUN = function(x) x / sqrt(sum(x^2))))
 
-set.seed(3)
-
-covmat <- matrix(rep(cov_avg, dim ^ 2), nrow = 3)
-diag(covmat) <- 1
-
-norm_samp <- data.frame(mvrnorm(n = n_samp, mu = rep(0, dim), Sigma = covmat))
 names(norm_samp) <- c("N", "P", "K")
 
 # Creating the projection matrix
@@ -35,35 +30,69 @@ norm_proj <- data.frame(proj, norm_samp)
 
 ```{r}
 # 3D Plot
-
 par3d(windowRect = c(30, 30, 500, 500),
-      bbox = c(-2,2,-2,2,-2,2))
+      bbox = c(0,1,0,1,0,1))
 plot3d(norm_samp, col="black", box = TRUE, size = 15, axes = FALSE, xlab = "", ylab = "", zlab = "")
 # ellips <- ellipse3d(covmat, 
 #             centre=c(0,0,0), level = 0.95)
 # plot3d(ellips, col = "grey", alpha = 0.2, add = TRUE, box = FALSE, axes = TRUE)
 #box3d()
-segments3d(x=as.vector(t(norm_proj[,c(1,2)])),
-           y=as.vector(t(norm_proj[,c(1,3)])),
-           z=as.vector(t(norm_proj[,c(1,4)])))
-arrow3d(p0 = c(-2,-2,-2),
-        p1 = c(2,2,2),
-        s = 1/30)
-text3d(x = norm_samp[7,1] + .25,
-       y = norm_samp[7,2],
-       z = norm_samp[7,3] - .25,
-       texts = "Species A",
-       font = 1,
-       size = 12)
-text3d(x = norm_samp[10,1],
-       y = norm_samp[10,2],
-       z = norm_samp[10,3] + .4,
-       texts = "Species B",
-       font = 1)
+segments3d(x=as.vector(t(norm_proj[2,c(1,2)])),
+           y=as.vector(t(norm_proj[2,c(1,3)])),
+           z=as.vector(t(norm_proj[2,c(1,4)])),
+           lty = 2)
+segments3d(x=as.vector(c(0, t(norm_proj[2,2]))),
+           y=as.vector(c(0, t(norm_proj[2,3]))),
+           z=as.vector(c(0, t(norm_proj[2,4]))),
+           lty = 2)
+lines3d(x = c(0,1),
+        y = c(0,1),
+        z = c(0,1))
 axes3d(edges = c("x--", "y--", "z-+"))
 #title3d(xlab = "N Response", ylab = "P Response")
 #mtext3d("K Response", "z-+", line = 2)
-grid3d(c("x+", "y+", "z"), lty = "dashed", n = 5)
+grid3d(c("x+", "y+", "z"), lty = "dashed", n = 3)
+```
+```{r}
+limit <- 1
+xlim = c(0, limit) 
+ylim = c(0, limit) 
+zlim = c(0, limit)
+theta = -40
+phi = 20
+
+pdf("../../Figures/conceptual_3dviz.pdf",
+    height = 6,
+    width = 8)
+scatter3D(x = norm_samp$N, 
+          y = norm_samp$P, 
+          z = norm_samp$K, 
+          pch = 19, cex = 2, alpha = 1,
+          theta = theta, phi = phi, xlim = xlim, ylim = ylim, zlim = zlim,
+          type = "p",
+          ylab = "", 
+          zlab = "", 
+          xlab = "", 
+          main = "Site-Level Treatment Responses", 
+          colkey = FALSE, ticktype = "detailed",
+          col = "black")
+
+scatter3D(z = c(norm_proj[2,1],norm_proj[2,4]), 
+          x = c(norm_proj[2,1],norm_proj[2,2]), 
+          y = c(norm_proj[2,1],norm_proj[2,3]), 
+          pch = 19, lwd = 1,
+          theta = theta, phi = phi, col = "black", add = TRUE, type = "l", lty = 1)
+
+scatter3D(z = c(0,norm_proj[2,4]), 
+          x = c(0,norm_proj[2,2]), 
+          y = c(0,norm_proj[2,3]), 
+          pch = 19, lwd = 1,
+          theta = theta, phi = phi, col = "black", add = TRUE, type = "l", lty = 1)
+
+scatter3D(z = c(0,1), x = c(0,1), y = c(0,1), pch = 19, lwd = 2,
+          theta = theta, phi = phi, col = "black", add = TRUE, type = "l", lty = 2)
+
+dev.off()
 ```
 
 ```{r}
@@ -74,8 +103,8 @@ dat_proj %>%
   ggplot(aes(x = Dim2,
              y = Dim3)) +
   theme_bw() +
-  xlim(-2,2) +
-  ylim(-2,2) +
+  xlim(-.25,.25) +
+  ylim(-.25,.25) +
   geom_text_repel(dat = dat_proj[c(7,10),],
             label = c("Species A", "Species B"),
                   point.padding = 0,
@@ -85,26 +114,72 @@ dat_proj %>%
   geom_segment(data = projmat, # Resizing vectors for visibility
                aes(x = c(0,0,0),
                    y = c(0,0,0),
-                   xend = dim2 * 2,
-                   yend = dim3* 2),
+                   xend = dim2 * .2,
+                   yend = dim3* .2),
                arrow = arrow(length = unit(0.25,"cm"),
                              type = "closed",
                              angle = 15)) +
   geom_text(data = projmat, # A little extra buffer so letters aren't obscured
-            aes(x = dim2 * 2.2,
-                y = dim3 * 2.2,
+            aes(x = dim2 * .25,
+                y = dim3 * .25,
                 label = c("N", "P","K")),
             size = 6) +
-    geom_point(size = 4) +
-  xlab("Dimension 2") +
-  ylab("Dimension 3")
+    geom_point(size = 4)
 
 ggsave(filename = "../../Figures/geom_d1d2.png",
        width = 4,
        height = 4)
 
+sum(dat_proj^2)
+
+summary(prcomp(norm_samp))
+prcomp(norm_samp, center = FALSE, scale = FALSE)$sdev[1]^2 / sum(prcomp(norm_samp, center = FALSE, scale = FALSE)$sdev^2)
 ```
 
+ 
+```{r}
+p1 <- norm_proj %>%
+  ggplot() +
+  geom_point(aes(x = N, y = P), size = 3) +
+  geom_abline(b = 0, a = 1) +
+  xlim(0, 1) +
+  ylim(0, 1) +
+  theme_bw() +
+  xlab("N Response") +
+  ylab("P Response")
+
+p2 <- norm_proj %>%
+  ggplot() +
+  geom_point(aes(x = N, y = K), size = 3) +
+  geom_abline(b = 0, a = 1) +
+  xlim(0, 1) +
+  ylim(0, 1) +
+  theme_bw() +
+  xlab("N Response") +
+  ylab("K Response")
+
+p3 <- norm_proj %>%
+  ggplot() +
+  geom_point(aes(x = P, y = K), size = 3) +
+  geom_abline(b = 0, a = 1) +
+  xlim(0, 1) +
+  ylim(0, 1) +
+  theme_bw() +
+  xlab("P Response") +
+  ylab("K Response")
+library(gridExtra)
+myplot <- arrangeGrob(p1,p2,p3, nrow =1)
+
+
+ggsave("../../Figures/conceptual_bivariate.pdf",
+       myplot,
+       height = 3,
+       width = 8)
+```
+
+```{r}
+apply(norm_samp, 1, mean)
+```
  
 
 ```{r}

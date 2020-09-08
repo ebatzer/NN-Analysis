@@ -1,0 +1,90 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Relating geometry to other characteristics
+
+```{r}
+sitechars <- read.csv("../../Data/comb-by-plot-clim-soil-diversity-02-Aug-2019.csv", stringsAsFactors = FALSE)
+sitechars %>% filter(site_code != "saline.us")
+
+goodsites <- sitechars %>% filter(year_trt == 0) %>%
+  group_by(site_code) %>%
+  select(site_code, year, first_nutrient_year) %>%
+  distinct() %>%
+  filter(year != first_nutrient_year)
+
+unique(site_var$site_code) %in% goodsites$site_code
+
+sitechars <- sitechars %>% 
+  filter(year_trt == 0) %>%
+  select(site_code, proportion_par, Ambient_PAR, Ground_PAR, total_mass, inverse_simpson, richness_vegan) %>% 
+  group_by(site_code) %>%
+  summarise_all(function(x) mean(na.omit(x)))
+
+site_chars <- left_join(site_var, sitechars, by = "site_code")
+```
+
+
+```{r}
+p1 <- site_chars %>% 
+  ggplot(aes(x = total_mass,
+             y = percent_captured)) +
+  geom_point(size = 3) +
+  theme_bw() + 
+  stat_smooth(method = "lm", se = FALSE, color = "black", linetype = 1) +
+  ylab("Proportion Variance Captured") +
+  xlab("Pretreatment Mean Plot Biomass")
+
+p2 <- site_chars %>% 
+  ggplot(aes(x = 1 - proportion_par,
+             y = percent_captured)) +
+  geom_point(size = 3) +
+  theme_bw() + 
+  stat_smooth(method = "lm", se = FALSE, color = "black", linetype = 2) +
+  ylab("Proportion Variance Captured") +
+  xlab("Pretreatment Mean % Light Interception")
+
+p3 <- site_chars %>% 
+  ggplot(aes(x = richness_vegan,
+             y = percent_captured)) +
+  geom_point(size = 3) +
+  theme_bw() + 
+  stat_smooth(method = "lm", se = FALSE, color = "black", linetype = 2) +
+  ylab("Proportion Variance Captured") +
+  xlab("Pretreatment Mean Plot Richness")
+
+p4 <- site_chars %>% 
+  ggplot(aes(x = inverse_simpson,
+             y = percent_captured)) +
+  geom_point(size = 3) +
+  theme_bw() + 
+  stat_smooth(method = "lm", se = FALSE, color = "black", linetype = 2) +
+  ylab("Proportion Variance Captured") +
+  xlab("Pretreatment Mean Plot Simpson Div")
+
+legend = gtable_filter(ggplotGrob(p1), "guide-box") 
+
+grid.arrange(arrangeGrob(p1 + ylab(""), 
+                         p2 + ylab(""),
+                         p3 + ylab(""),
+                         p4 + ylab(""), 
+                         nrow = 2,
+                        top =textGrob("Site Variation in Response Dimensionality",
+                                      gp=gpar(fontsize=18,font=1)),
+                         left = textGrob("Proportion Variance Captured", rot = 90, vjust = 1)))
+
+
+write.csv(site_chars %>% select(site_code, percent_captured),
+          "../../Data/variance_proportion_bysites.csv")
+
+cordf <- site_chars %>% filter(all_sig == TRUE) %>% select(site_code, percent_captured, total_mass, richness_vegan, inverse_simpson) %>% na.omit(.)
+
+library(jmuOutlier)
+
+perm.cor.test(cordf$percent_captured, cordf$total_mass)
+# perm.cor.test(cordf$percent_captured, cordf$proportion_par)
+perm.cor.test(cordf$percent_captured, cordf$richness_vegan)
+perm.cor.test(cordf$percent_captured, cordf$inverse_simpson)
+```

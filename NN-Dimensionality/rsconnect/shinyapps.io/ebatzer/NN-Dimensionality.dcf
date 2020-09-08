@@ -5,8 +5,9 @@ account: ebatzer
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 1680372
-bundleId: 3060340
+bundleId: 3552768
 url: https://ebatzer.shinyapps.io/NN-Dimensionality/
-when: 1587744541.16374
+when: 1598302442.28743
 asMultiple: FALSE
 asStatic: FALSE
+ignoredFiles: Data/tradeoffs_RRPP_Pvals_Summary_old.csv|Data/tradeoffs_specscores_long_old.csv

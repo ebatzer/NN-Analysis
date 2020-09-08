@@ -18,9 +18,6 @@ library(vegan) # General ecology functions
 library(data.table) # Fast reading of data tables
 library(testthat) # Unit testing
 library(dtplyr) #Dplyr for data.table
-
-# Write new datasets?
-write_datasets = TRUE
 ```
 
 ### Reading in datasets
@@ -30,9 +27,6 @@ write_datasets = TRUE
 biomass_data <- fread("../../Data/comb-by-plot-23-april-2020.csv",
                       stringsAsFactors = FALSE,
                       na.strings = c('NA','NULL'))
-
-biomass_data %>% filter(site_code == "sevi.us" & trt == "P")
-
 # Cover
 cover <- fread('../../Data/full-cover-23-april-2020.csv',
                stringsAsFactors = FALSE,
@@ -40,6 +34,9 @@ cover <- fread('../../Data/full-cover-23-april-2020.csv',
 
 # Analysis parameters
 min_yr_trt <- 5 # Number of years minimum to be included in analysis
+
+# Write new datasets?
+write_datasets = TRUE
 ```
 
 #### Cleaning datasets
@@ -72,28 +69,27 @@ rm(sites_table, cover)
 ### Taxonomic Adjustments from Bakker
 
 ```{r}
-source("../Taxonomic.Adjustments.function.200521.R")
+library(plyr)
+source("../../Code/Tradeoffs/Tradeoffs_TaxAdj.R")
+cover_adjusted <- Taxonomic.Adjustments(cover.long)
 
-
+detach("package:plyr", unload=TRUE)
+library(tidyverse)
 ```
 
+```{r}
+cover_adjusted %>% filter(site_code == "mtca.au")
+```
 
 
 
 ### Editing datasets, converting to wide format
 
 ```{r}
-# Choosing only our treatments of interest
-cover.long <- cover.long[trt %in% c('Control','N','P','K')]
-
-# Clean out unknowns, non-vascular plants
-sps <- unique(cover.long$Taxon)
-unwanted.sps <- sps[c(grep('UNKNOWN',sps),grep('BRYOPHYTE',sps),grep('LICHEN',sps))]
-
-cover.long <- cover.long[!(Taxon %in% unwanted.sps | local_lifeform == 'MOSS' | functional_group == 'BRYOPHYTE')]
-
-# Removing the "GRAMINOID" functional group label, converting to just "GRASS"
-cover.long[functional_group =='GRAMINOID', functional_group := 'GRASS']
+# Filtering treatments not in the desired list
+cover_adjusted <- cover_adjusted %>% filter(trt %in% c("Control", "N", "P", "K")) %>%
+  mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
+  mutate(Taxon = tolower(str_trim(Taxon)))
 
 # Filtering odd plot layouts
 ## Some sites have multiple control plots in a block.
@@ -101,7 +97,7 @@ cover.long[functional_group =='GRAMINOID', functional_group := 'GRASS']
 ## This takes care of a few sites that have strange plot configurations,
 ## like sgs.us
 
-site.plots.keep <- cover.long %>% 
+site.plots.keep <- cover_adjusted %>% 
   group_by(site_code,block,plot,trt) %>% 
   summarise(yrs.data = max(year_trt)) %>% 
   filter(yrs.data >= min_yr_trt)
@@ -121,22 +117,22 @@ site.plots.keep <- left_join(site.plots.keep, filtering_min_plot) %>%
   filter(plot == min.plot)
 
 # Joining into master long-format cover dataframe
-cover.long <- left_join(site.plots.keep, cover.long)
+cover_adjusted <- left_join(site.plots.keep, cover_adjusted)
 
 # Remove unused factor levels
-cover.long <- droplevels(cover.long) 
+cover_adjusted <- droplevels(cover_adjusted) 
 
 # cast long into wide
-cover.wide <- reshape2::dcast(cover.long,site_code+year+block+plot+trt+year_trt ~ Taxon,
+cover.wide <- reshape2::dcast(cover_adjusted,site_code+year+block+plot+trt+year_trt ~ Taxon,
                               value.var='max_cover', 
                               fun.aggregate = sum,drop=T,fill=0)
 
 # Cleaning workspace
-rm(sps, unwanted.sps, site.plots.keep)
+rm(site.plots.keep)
 
 if(write_datasets){
   write.csv(x = cover.wide, "../../Data/cover_wide_tradeoffs.csv")
-  write.csv(x = cover.long, "../../Data/cover_long_tradeoffs.csv")
+  write.csv(x = cover_adjusted, "../../Data/cover_long_tradeoffs.csv")
 }
 ```
 
@@ -149,10 +145,16 @@ cover.wide %>%
   group_by(site_code, trt) %>%
   summarise(obs = n(),
             yrtrt = max(year_trt)) %>%
+  filter(!(site_code %in% c("ethamc.au","ethass.au"))) %>%
   ggplot(aes(x = obs,
              fill = trt)) +
   geom_histogram(alpha = .5, position = position_dodge()) +
   ggtitle("Distribution of Observations")
+
+cover.wide %>% 
+  group_by(site_code, year, trt) %>%
+  filter(site_code %in% c("ethamc.au","ethass.au", "bnch.us", "cbgb.us", "elliot.us")) %>%
+  summarise(obs = n())
 ```
 
 #### Summarising species attributes at each site
@@ -169,30 +171,52 @@ Note: Must correct for zero observations when calculating mean and max values, s
 
 ```{r}
 # Tabulating statistics by species
-spec_stats <- cover.long %>%
+spec_stats <- cover_adjusted %>%
   group_by(site_code, trt, Taxon) %>%
   
   # Total number of observations by treatment and site, and mean cover
   summarise(n_obs = n(),
             mean_cover = mean(max_cover)) %>%
   
-  # Pivot the above variablesto wide format (makes other manipulations easier)
+  # Pivot the above variables to wide format (makes other manipulations easier)
   pivot_wider(names_from = trt,
               values_from = c(mean_cover, n_obs)) %>%
   
   # Replace NA's with 0
   replace(., is.na(.), 0)
 
+# Tabulating statistics by species
+spec_stats_y0 <- cover_adjusted %>%
+  filter(year_trt == 0) %>%
+  group_by(site_code, trt, Taxon) %>%
+  
+  # Total number of observations by treatment and site, and mean cover
+  summarise(pres_y0 = n(),
+            cov_y0 = mean(max_cover)) %>%
+  
+  # Pivot the above variables to wide format (makes other manipulations easier)
+  pivot_wider(names_from = trt,
+              values_from = c(cov_y0, pres_y0)) %>%
+  
+  # Replace NA's with 0
+  replace(., is.na(.), 0)
+
 # Tabulate number of observations in each site -- by block, so comparable with above. Defines maximum number of possible observations
-site_obs <- cover.long %>%
+site_obs <- cover_adjusted %>%
   ungroup() %>%
   select(site_code, year, block) %>%
   distinct() %>%
   group_by(site_code) %>%
-  summarise(total_obs = n())
+  summarise(total_obs = n(),
+            total_blocks = length(unique(block)))
 
 # Finalize calculations
 specfilters <- full_join(site_obs, spec_stats) %>%
+  
+  left_join(spec_stats_y0) %>%
+  
+  # Replace NA's with 0
+  replace(., is.na(.), 0) %>%
   
   # Define the number of observation variables as fractions of total potential observations
   mutate_at(vars(contains("n_obs")), funs(. / total_obs)) %>%
@@ -214,7 +238,9 @@ specfilters <- full_join(site_obs, spec_stats) %>%
             Occ_Total = rowMeans(select(., contains("n_obs"))),
             Cov_Control = mean_cover_Control,
             Cov_Total = rowMeans(select(., contains("mean_cover"))),
-            All_Trts = alltrts)
+            All_Trts = alltrts,
+            Cov_ControlY0 = cov_y0_Control / total_blocks,
+            Pres_ControlY0 = pres_y0_Control / total_blocks)
 
 if(write_datasets){
   write.csv(x = specfilters,
@@ -229,11 +255,13 @@ cover <- fread('../../Data/full-cover-23-april-2020.csv',
                na.strings = c('NA','NULL'))
 
 taxonomy <- cover %>% 
-  # filter(Family != "NULL" & N_fixer != "NULL") %>%
   group_by(site_code, Taxon) %>%
   summarise(ps_path = unique(ps_path),
-            functional_group = unique(functional_group)[1],
-            N_fixer = unique(N_fixer)[1]) %>%
+            lifespan = na.omit(unique(local_lifespan))[1],
+            functional_group = na.omit(unique(functional_group))[1],
+            N_fixer = na.omit(unique(N_fixer))[1],
+            lifeform = na.omit(unique(local_lifeform))[1],
+            provenance = na.omit(unique(local_provenance))[1]) %>%
   mutate(functional_group = case_when(functional_group == "GRAMINOID" ~ "Graminoid",
                                       functional_group == "GRASS" ~ "Graminoid",
                                       functional_group == "LEGUME" ~ "Legume",
@@ -242,7 +270,10 @@ taxonomy <- cover %>%
   mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
   mutate(Taxon = tolower(str_trim(Taxon)))
 
-write.csv(taxonomy,
+if(write_datasets){
+  write.csv(taxonomy,
           "../../Data/tradeoffs_taxonomy.csv")
+}
 ```
+
 

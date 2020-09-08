@@ -1,0 +1,148 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Data Checking Post Feedback
+
+```{r}
+cover <- read.csv("../../Data/tradeoffs_comm.csv",
+               stringsAsFactors = FALSE)
+
+attr <- read.csv("../../Data/tradeoffs_attr.csv",
+                 stringsAsFactors = FALSE)
+
+cover <- cbind(cover, attr)
+
+library(tidyverse)
+```
+
+
+# marc.ar
+
+```{r}
+cover %>%
+  filter(site_code == "marc.ar") %>%
+  filter(trt %in% c("Control", "N", "P", "K")) %>%
+  select(festuca.arundinacea, trt, year_trt) %>%
+  ggplot(aes(x = year_trt, 
+             y = festuca.arundinacea,
+             color = trt)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, fullrange = TRUE) +
+  xlab("Year") +
+  ylab("Cover") +
+  ggtitle("Cover of F. arunindinacea over time")
+```
+
+# konz.us
+
+```{r}
+cover %>%
+  filter(site_code == "konz.us") %>%
+  filter(trt %in% c("Control", "N", "P", "K")) %>%
+  select(sporobolus.heterolepis, plot, trt, year_trt) %>%
+  ggplot(aes(x = year_trt, 
+             y = sporobolus.heterolepis,
+             color = trt,
+             group = plot)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, fullrange = TRUE) +
+  xlab("Year") +
+  ylab("Max Cover") +
+  ggtitle("Cover of S. heterolepis over time (separate lines for each plot)")
+```
+
+```{r}
+cover %>%
+  filter(site_code == "konz.us") %>%
+  filter(trt %in% c("Control", "N", "P", "K")) %>%
+  select(sporobolus.heterolepis, plot, trt, year_trt) %>%
+  ggplot(aes(x = year_trt, 
+             y = sporobolus.heterolepis,
+             color = trt,
+             group = plot)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, fullrange = TRUE) +
+  xlab("Year") +
+  ylab("Max Cover") +
+  ggtitle("Cover of S. heterolepis over time \n(separate lines for each plot)")
+```
+
+# mtca.au
+
+```{r}
+cover %>%
+  filter(site_code == "mtca.au") %>%
+  filter(trt %in% c("Control", "N", "P", "K")) %>%
+  select(stipa.sp, plot, trt, year_trt) %>%
+  ggplot(aes(x = year_trt, 
+             y = stipa.sp,
+             color = trt)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, fullrange = TRUE) +
+  xlab("Year") +
+  ylab("Max Cover") +
+  ggtitle("Cover of Stipa sp. over time (separate lines for each plot)")
+```
+
+# Yarra.au
+
+```{r}
+cover %>%
+  filter(site_code == "ethass.au") %>%
+  filter(trt %in% c("Control", "N", "P", "K")) %>%
+  select(ptilotus.polystachyus, plot, trt, year_trt) %>%
+  ggplot(aes(x = year_trt, 
+             y = ptilotus.polystachyus,
+             color = trt)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, fullrange = TRUE) +
+  xlab("Year") +
+  ylab("Max Cover") +
+  ggtitle("Cover of Stipa sp. over time (separate lines for each plot)")
+```
+
+```{r}
+cover %>%
+  filter(site_code == "bogong.au") %>%
+  filter(trt %in% c("Control", "N", "P", "K")) %>%
+  select(craspedia.jamesii, plot, trt, year_trt) %>%
+  ggplot(aes(x = year_trt, 
+             y = craspedia.jamesii,
+             color = trt)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, fullrange = TRUE) +
+  xlab("Year") +
+  ylab("Max Cover") +
+  ggtitle("Cover of C. jamesii sp. over time")
+
+cover %>%
+  filter(site_code == "bogong.au") %>%
+  filter(trt %in% c("Control", "N", "P", "K")) %>%
+  select(erigeron.sp, plot, trt, year_trt) %>%
+  ggplot(aes(x = year_trt, 
+             y = erigeron.sp,
+             color = trt)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, fullrange = TRUE) +
+  xlab("Year") +
+  ylab("Max Cover") +
+  ggtitle("Cover of C. jamesii sp. over time (separate lines for each plot)")
+```
+
+```{r}
+cover %>%
+  filter(site_code == "jena.de") %>%
+  filter(trt %in% c("Control", "N", "P", "K")) %>%
+  select(elymus.repens, plot, trt, year_trt) %>%
+  ggplot(aes(x = year_trt, 
+             y = elymus.repens,
+             color = trt,
+             group = plot)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, fullrange = TRUE) +
+  xlab("Year") +
+  ylab("Max Cover") +
+  ggtitle("Cover of E. repens sp. over time (separate lines for each plot)")
+```

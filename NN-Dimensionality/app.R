@@ -12,15 +12,17 @@ library(ggrepel); library(ggpmisc); library(DT); library(shinythemes)
 
 # Reading in datasets
 SS_pvals <- read.csv("Data/tradeoffs_RRPP_Pvals_Summary.csv", row.names = 1) %>%
-  
-  filter(site != "saline.us")
+  filter(site != "saline.us") %>%
+  arrange(site)
 
 specscores <- read.csv("Data/tradeoffs_specscores_long.csv", row.names = 1)   %>%
+  filter(site != "saline.us") %>%
+  arrange(site)
   
-  filter(site != "saline.us")
-
 sitenames <- as.character(unique(SS_pvals$site))
-  
+
+scalar1 <- function(x) {x / sqrt(sum(x^2))}
+
 # Creating the projection matrix
 dim1 <- c(1, 1, 1) / sqrt(sum(c(1, 1, 1)^2))
 dim2 <- c(0, -1, 1) / sqrt(sum(c(0, -1, 1)^2))
@@ -38,17 +40,17 @@ ui <- fixedPage(theme = shinytheme("readable"),
             selectInput("selected_site", "Chosen Site", 
                         sitenames, selected = "hopl.us", multiple = FALSE,
                         selectize = TRUE, width = NULL, size = NULL),
+            h3(textOutput("sitename")),
+            br(),
             h2("Model Fitting and Sum of Squares Decomposition"),
             column(8, 
-                   "To estimate species responses to different single nutrient addition treatments,
-                   a multiple linear regression model was fit to log2-transformed species abundance data 
-                   at all sites containing at least 5 years of observations.",
+                   "To estimate species responses to different single nutrient addition treatments, a multiple linear regression model was fit to log2-transformed species abundance data at all sites containing at least 5 years of observations.",
                    br(), br(),
                    "Model Formula:",
                    br(), br(),
-                   "Y ~ Year_Fctr + Block + Treatment : Log(Year_Num)",
+                   "Y ~ Plot + Year + N + P + K",
                    br(), br(), 
-                   "Where the abundance of a species in a given observation, Y, is a function of site-level interannual variation (Year_Fctr), spatial heterogeneity (Block), and a time-saturating relationship with nutrient addition treatment (Treatment : Log(Year_Num)).",
+                   "Where the abundance of a species in a given observation, Y, is estimated as a function of the quantity of resources added (N, P, or K, expressed as the years of treatment), plot-level variation in abundance (Plot), and yearly fluctuations in species abundance at the site scale (Year). This approach should provide a detrended estimate of nutrient addition effects,  accounting for repeated-measures design and interannual variation in cover.",
                    br(),br(), 
                    "The significance of model terms was calculated using a randomized residual permutation procedure (RRPP). Resulting sums-of-squares decomposition and P-values for different coefficients within a site are shown to the right.",
                    br(),br(), 
@@ -59,7 +61,7 @@ ui <- fixedPage(theme = shinytheme("readable"),
          br(),
          h2("Pairwise Comparisons of Species Responses"),
          br(),
-         "Following model fitting, treatment coefficients were extracted to estimate species responses to nutrient enrichment. Below shows a visualization of these fitted coefficients, filtered to just those species occurring in >20% of all community observations within a site. This figure can be manipulated to show pairwise contrasts (if two different variables are selected), or a dot plot displaying the magnitude of response organized alphabetically (if both selected variables are the same). Points are colored by functional group.",
+         "Following model fitting, treatment coefficients were extracted to estimate species responses to nutrient enrichment. Below shows a visualization of these fitted coefficients, filtered to just those species occurring in >33% of all community observations within a site. This figure can be manipulated to show pairwise contrasts (if two different variables are selected), or a dot plot displaying the magnitude of response organized alphabetically (if both selected variables are the same). Points are colored by functional group.",
          br(), br(),
          "Are treatments with correlated patterns of community change (positive or negative slopes) as expected?",
          br(), br()),
@@ -80,9 +82,9 @@ ui <- fixedPage(theme = shinytheme("readable"),
          br(), br(),
          h2("3D Visualization of Response Vectors"),
          br(),
-         "To visualize differences in estimated response trajectories, 3D visualizations of filtered treatment response coefficients are presented below. In this figure, each point corresponds to the estimated change in cover (at the log2 scale) for each species within a site, per log(year) of treatment.",
+         "To visualize differences in estimated response trajectories, 3D visualizations of filtered treatment response coefficients are presented below. In this figure, each point corresponds to the estimated change in cover (at the log2 scale) for each species within a site, per year of treatment.",
          br(), br(),
-         "The 1:1:1 line presented illustrates a one-dimensional (neutral) expectation of nutrient enrichment response, where species responses are consistent across all nutrient types. Differences between species observed responses and their projection on this line are highlighted by dashed lines.",
+         "The 1:1:1 line presented illustrates a one-dimensional (neutral) expectation of nutrient enrichment response, where species responses are directionally consistent across treatments, only varying in total magnitude. Differences between species observed responses and their projection on this line are highlighted by dashed lines.",
          br(), br(),
          "Total variance of species responses captured by this projection will range between 0-1. When this neutral expectation fails to characterized response patterns, observed responses will deviate strongly from this 1:1:1 line (variance captured = 0); consistently one-dimensional responses across species will fall largely long this 1:1:1 line (variance captured = 1)."
   ),
@@ -95,9 +97,9 @@ ui <- fixedPage(theme = shinytheme("readable"),
   column(12,
          br(), br(),
          h2("Table of Fitted Response Coefficients"),
-         "A summary table of all (unfiltered) fitted responses and species functional group assignments is presented below. Much of this information can be gleaned from previous figures, but may benefit from a quick inspection of general patterns. Are the most extreme responders (on the log2 scale) as expected?",
+         "A summary table of fitted responses and species functional group assignments is presented below. Much of this information can be gleaned from previous figures, but may benefit from a quick inspection of general patterns. Are the most extreme responders (on the log2 scale) as expected?",
          br(), br(),
-         "For perspective, a value of '+1' indicates that a species doubles in cover for each log-year of treatment, meaning that this species is estimated to increase in cover by ~70% after 1 year of treatment, by ~100% after 2 years of treatment, and by ~150% after 5 years of treatment.",
+         "For perspective, a value of '+1' indicates that a species doubles in cover for each year of treatment, compounding over time; cover will change by a factor of 4 in 2 years, a factor of 8 in 3, etc. For most species, coefficients will be < 0.25, unless changes in cover over time are dramatic. Note that these coefficients are generated from de-trended estimates of cover -- species which increase under certain treatments may have negative coefficients if this degree of increase is less than corresponding control plots.",
          br(), br(),
          "Range of each set of values is as follows:",
          tableOutput('resprange'),
@@ -109,11 +111,16 @@ ui <- fixedPage(theme = shinytheme("readable"),
 
 # Define server logic required to draw a histogram
 server <- function(input, output) {
+  
+  output$sitename <- renderText(paste("Site:", 
+                                      unique(SS_pvals$site_name[SS_pvals$site == input$selected_site]),
+                                      "| Country:",
+                                      unique(SS_pvals$country[SS_pvals$site == input$selected_site])))
    
    output$SStable <- renderTable({
      
       # subset rows
-      ss_row <- SS_pvals[SS_pvals$site == input$selected_site,]
+      ss_row <- SS_pvals[SS_pvals$site == input$selected_site,-c(6:7)]
       
       ss_row %>% 
         mutate(P_value = format.pval(P_Value, digits = 3))
@@ -127,18 +134,21 @@ server <- function(input, output) {
        
        filter(site == input$selected_site) %>%
        
-       filter(Occ_Total > 0.2) %>%
+       filter(Occ_Total > 0.33) %>%
        
        # Rescaling responses
-       mutate(trt_K = scale(trt_K, scale = TRUE),
-              trt_N = scale(trt_N, scale = TRUE),
-              trt_P = scale(trt_P, scale = TRUE)) 
+       # mutate(trt_K = scale(trt_K, scale = TRUE),
+       #        trt_N = scale(trt_N, scale = TRUE),
+       #        trt_P = scale(trt_P, scale = TRUE)) 
+       mutate(trt_K = scale(trt_K, center = FALSE),
+              trt_N = scale(trt_N, center = FALSE),
+              trt_P = scale(trt_P, center = FALSE))
 
      # 1:1:1 Projection
      site_proj <- data.frame(as.matrix(sitedat %>% select(trt_N, trt_P, trt_K)) %*% projmat)[,1] / sqrt(3)
      
      # Plotting parameters
-     max_line <- (matrix(c(-3,3,-3,3,-3,3),
+     max_line <- (matrix(c(-4,4,-4,4,-4,4),
                         nrow = 2) %*% projmat)[,1] / sqrt(3)
      theta = 40
      phi = 30
@@ -146,7 +156,7 @@ server <- function(input, output) {
      par(mar = c(2, 2, 2, 0))
      
      scatter3D(z = sitedat$trt_N, x = sitedat$trt_P, y = sitedat$trt_K, pch = 19, cex = 2,
-               theta = theta, phi = phi, xlim = c(-3, 3), ylim = c(-3,3), zlim = c(-3,3),
+               theta = theta, phi = phi, xlim = c(-4, 4), ylim = c(-4,4), zlim = c(-4,4),
                xlab = "Stdized P Response", ylab = "Stdized K Response", zlab = "Stdized N Response", type = "p",
                main = "Site-Level Treatment Responses", 
                colkey = FALSE, ticktype = "detailed",
@@ -171,12 +181,15 @@ server <- function(input, output) {
        
        filter(site == input$selected_site) %>%
        
-       filter(Occ_Total > 0.2) %>%
+       filter(Occ_Total > 0.33) %>%
        
        # Rescaling responses
-       mutate(trt_K = scale(trt_K, scale = TRUE),
-              trt_N = scale(trt_N, scale = TRUE),
-              trt_P = scale(trt_P, scale = TRUE)) 
+       mutate(trt_K = scale(trt_K, scale = TRUE, center = FALSE),
+              trt_N = scale(trt_N, scale = TRUE, center = FALSE),
+              trt_P = scale(trt_P, scale = TRUE, center = FALSE))
+       # mutate(trt_K = scalar1(trt_K),
+       #        trt_N = scalar1(trt_N),
+       #        trt_P = scalar1(trt_P))
      
      
      siteproj <- as.matrix(sitedat %>% select(trt_N, trt_P, trt_K)) %*% projmat     
@@ -194,12 +207,15 @@ server <- function(input, output) {
        
        filter(site == input$selected_site) %>% 
        
-       filter(Occ_Total > .2) %>%
+       filter(Occ_Total > .33) # %>%
        
        # Rescaling responses
-       mutate(trt_K = scale(trt_K, scale = TRUE),
-              trt_N = scale(trt_N, scale = TRUE),
-              trt_P = scale(trt_P, scale = TRUE)) 
+       # mutate(trt_K = scale(trt_K, scale = TRUE, center = FALSE),
+       #        trt_N = scale(trt_N, scale = TRUE, center = FALSE),
+       #        trt_P = scale(trt_P, scale = TRUE, center = FALSE))
+       # mutate(trt_K = scalar1(trt_K),
+       #        trt_N = scalar1(trt_N),
+       #        trt_P = scalar1(trt_P))
      
      X_chosen = paste("trt_", input$X_chosen, sep = "")
      Y_chosen = paste("trt_", input$Y_chosen, sep = "")
@@ -207,17 +223,35 @@ server <- function(input, output) {
      chosen_dat <- sitedat %>%
        select(X_chosen, Y_chosen, Species, functional_group)
        
-     chosen_dat %>% 
-       ggplot(aes(x = !!sym(X_chosen),
-                  y = !!sym(Y_chosen),
-                  label = Species,
-                  color = functional_group)) +
-       theme_minimal() + 
-       stat_smooth(method = "lm", se = FALSE, color = "black") +
-       geom_point(size = 4) +
-       stat_dens2d_filter(geom = "label_repel", keep.fraction = 0.2) +
-       xlab(paste("Estimated", input$X_chosen, "Response (Change in Log2 Cover / Log Year of Treatment)")) +
-       ylab(paste("Estimated", input$Y_chosen, "Response (Change in Log2 Cover / Log Year of Treatment)"))
+     if(X_chosen != Y_chosen){
+       chosen_dat %>%
+         ggplot(aes(x = !!sym(X_chosen),
+                    y = !!sym(Y_chosen),
+                    label = Species,
+                    color = functional_group)) +
+         theme_minimal() +
+         stat_smooth(method = "lm", se = FALSE, color = "black") +
+         geom_point(size = 4) +
+         stat_dens2d_filter(geom = "label_repel", keep.fraction = 0.2) +
+         xlab(paste("Estimated", input$X_chosen, "Response (Change in Log2 Cover / Year of Treatment)")) +
+         ylab(paste("Estimated", input$Y_chosen, "Response (Change in Log2 Cover / Year of Treatment)"))
+       
+       }else{
+         chosen_dat %>%
+           ggplot(aes(label = Species,
+                      color = functional_group)) +
+           theme_minimal() +
+           geom_vline(xintercept = 0) +
+           geom_segment(aes(xend = !!sym(X_chosen),
+                            yend = Species,
+                            x = 0,
+                            y = Species),
+                        color = "black") +
+           geom_point(aes(x = !!sym(X_chosen),
+                        y = Species),
+                      size = 3) +
+           xlab(paste(input$X_chosen, "Response (Change in Log2 Cover / Year of Treatment)"))
+       }
 
    })
    

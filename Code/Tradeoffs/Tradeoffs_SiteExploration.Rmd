@@ -1,0 +1,295 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse); library(vegan)
+write_datsets = FALSE
+```
+
+# Deriving site-level abiotic and commmunity variables
+
+```{r}
+sitechars <- read.csv("../../Data/comb-by-plot-clim-soil-diversity-03-Jun-2020.csv",
+                        stringsAsFactors = FALSE)
+
+cover.long <- read.csv("../../Data/cover_long_tradeoffs.csv",
+                       row.names = 1,
+                       stringsAsFactors = FALSE)
+
+projdat <- read.csv("../../Data/tradeoffs_dimstats.csv",
+                    row.names = 1,
+                    stringsAsFactors = FALSE)
+
+taxonomy <- read.csv("../../Data/tradeoffs_taxonomy.csv", row.names = 1)
+
+```
+
+```{r}
+calc_div = function(x){
+  alpha = vegan::specnumber(x)
+  gamma = vegan::specnumber(colSums(x))
+  beta = gamma / alpha
+  
+  output = data.frame(alpha = alpha,
+                      gamma = rep(gamma, length(alpha)),
+                      beta = beta)
+  
+  return(output)
+  
+}
+```
+
+```{r, warning=FALSE}
+site_abiotic <- sitechars %>% 
+  group_by(site_code) %>%
+  select(managed, burned, grazed, anthropogenic, 
+         MAP_v2, MAP_WARM_Q_v2, 
+         MAT_v2, TEMP_WET_Q_v2,
+         RAIN_PET, PET,
+         pct_C, pct_N, ppm_P, ppm_K,
+         proportion_par,
+         site_richness, site_introduced_richness,
+         live_mass, litter_mass) %>%
+  mutate_all(as.numeric) %>%
+  summarise_all(function(x) mean(na.omit(x)))
+```
+
+```{r}
+cover.spat <- cover.long %>% 
+  filter(year_trt == 0) %>%
+  select(site_code, block, plot, Taxon, max_cover) %>%
+  mutate(max_cover = as.numeric(max_cover)) %>%
+  group_by(site_code, block, plot, Taxon) %>%
+  summarise(max_cover = sum(max_cover)) %>%
+  pivot_wider(values_from = max_cover,
+              names_from = Taxon,
+              values_fill = list(max_cover = "0"))
+
+sevi_subset <- cover.spat %>% filter(site_code == "sevi.us") %>%
+  ungroup() %>%
+  mutate(block = ceiling(plot / 8))
+
+cover.spat[cover.spat$site_code == "sevi.us",] <- sevi_subset
+
+spat_div = cover.spat %>% 
+  group_by(site_code, block) %>%
+  do(cbind(plot = .$plot, 
+           calc_div(.[,-c(1:3)]))) %>%
+  ungroup() %>%
+  select(-plot) %>%
+  group_by(site_code) %>%
+  summarise_all(mean) %>%
+  rename(c('alpha_spat' = 'alpha',
+              'beta_spat' = 'beta',
+              'gamma_spat' = 'gamma'))
+
+```
+
+```{r}
+cover.temp <- cover.long %>% 
+  filter(year_trt < 5 & 
+           trt == "Control") %>% 
+  select(site_code, year_trt, plot, Taxon, max_cover) %>%
+  mutate(max_cover = as.numeric(max_cover)) %>%
+  group_by(site_code, year_trt, plot, Taxon) %>%
+  summarise(max_cover = sum(max_cover)) %>%
+  pivot_wider(values_from = max_cover,
+              names_from = Taxon,
+              values_fill = list(max_cover = "0"))
+
+temp_div <- cover.temp %>%
+  group_by(site_code, plot) %>%
+  do(cbind(plot = .$plot, 
+           calc_div(.[,-c(1:3)]))) %>%
+  ungroup() %>%
+  select(-plot) %>%
+  group_by(site_code) %>%
+  summarise_all(mean) %>%
+  rename(c('alpha_temp' = 'alpha',
+              'beta_temp' = 'beta',
+              'gamma_temp' = 'gamma'))
+
+```
+
+```{r}
+comm_att <- cover.long %>% 
+  left_join(taxonomy, by = c("site_code", "Taxon")) %>%
+  filter(year_trt == 0) %>%
+  group_by(site_code, block) %>%
+  summarise(total_cover = sum(max_cover),
+            ann_cover = sum(max_cover[lifespan == 'ANNUAL']),
+            legume_cover = sum(max_cover[functional_group == 'LEGUME'])) %>%
+  mutate(ann_frac = ann_cover / total_cover,
+         legume_frac = legume_cover / total_cover) %>%
+  ungroup() %>%
+  group_by(site_code) %>%
+  select(-block) %>%
+  summarise_all(mean)
+```
+
+```{r}
+site_table <- projdat %>% 
+  select(site_code, percent_captured) %>%
+  left_join(site_abiotic, by = "site_code") %>%
+  left_join(comm_att, by = "site_code") %>%
+  left_join(spat_div, by = "site_code") %>%
+  left_join(temp_div, by = "site_code")
+```
+
+```{r}
+site_table %>% 
+  ggplot(aes(x = beta_temp,
+             y = percent_captured)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, alpha = .5)+
+  stat_smooth(method = "lm", se = FALSE, color = "black") +
+  ggrepel::geom_label_repel(aes(label = site_code))
+
+site_table %>% 
+  ggplot(aes(x = beta_spat,
+             y = percent_captured)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, alpha = .5)+
+  stat_smooth(method = "lm", se = FALSE, color = "black") +
+  ggrepel::geom_label_repel(aes(label = site_code))
+
+summary(lm(percent_captured ~ beta_spat + beta_temp, data = site_table))
+
+```
+
+```{r}
+left_join(site_table, semdat_agg, by = "site_code") %>%
+  ggplot(aes(x = spatial_beta_q0,
+             y = beta_spat)) +
+  geom_point()+
+  ggrepel::geom_label_repel(aes(label = site_code))
+
+left_join(site_table, semdat_agg, by = "site_code") %>%
+  ggplot(aes(x = temporal_beta_q0,
+             y = beta_temp)) +
+  geom_point() +
+  ggrepel::geom_label_repel(aes(label = site_code))
+```
+
+
+```{r}
+anovatabs <- read.csv("../../Data/tradeoffs_RRPP_Pvals_Summary.csv",
+                      row.names = 1)
+
+
+site_chars <- read.csv("../../Data/tradeoffs_sitechars.csv", 
+                       row.names = 1)
+
+if(write_datsets){
+  sitechars <- read.csv("../../Data/comb-by-plot-clim-soil-diversity-03-Jun-2020.csv",
+                        stringsAsFactors = FALSE)
+  
+  sitechars_quant <- sitechars %>% 
+    filter(year_trt == 0) %>%
+    select(site_code, proportion_par, Ambient_PAR, Ground_PAR, 
+           live_mass, unsorted_mass,
+           rich, site_year_rich,
+           plot_beta, inverse_simpson,
+           pct_N, ppm_P, ppm_K) %>% 
+    group_by(site_code) %>%
+    mutate_all(as.numeric) %>%
+    summarise_all(function(x) mean(na.omit(x)))
+  
+  sitechars_chr <- sitechars %>% 
+    filter(year_trt == 0) %>%
+    select(site_code, habitat, continent, country, managed, burned, grazed, anthropogenic,
+           RAIN_PET, MAT_v2, MAP_v2, MAP_VAR_v2, MAT_RANGE_v2, MAP_WARM_Q_v2, TEMP_WET_Q_v2,
+           elevation) %>% 
+    group_by(site_code) %>%
+    summarise_all(unique)
+  
+  spatial_het_prod <- sitechars %>%
+    filter(year_trt == 0) %>%
+    group_by(site_code) %>%
+    summarise(spat_sd_mass = sd(na.omit(live_mass)))
+  
+  tradeoffs_sitechars <- left_join(sitechars_quant, sitechars_chr, by = "site_code") %>%
+    left_join(spatial_het_prod, by = "site_code")
+
+  write.csv(x = tradeoffs_sitechars, "../../Data/tradeoffs_sitechars.csv")
+}
+
+```
+
+
+```{r}
+full_site_chars <- anovatabs %>%
+  group_by(site) %>%
+  mutate(SS = SumofSquares / SumofSquares[Source == "Total"]) %>%
+  select(-SumofSquares, -DF, -P_Value) %>%
+  pivot_wider(names_from = Source,
+              values_from = SS) %>%
+  arrange(year_trt) %>%
+  left_join(site_chars, by = c("site" = "site_code")) %>%
+  left_join(projdat %>% select(site_code, n_taxa, percent_captured), by = c("site" = "site_code")) %>%
+  arrange(percent_captured) %>% 
+  mutate(fert_var = (trt_K_num + trt_P_num + trt_N_num) /
+           (trt_K_num + trt_P_num + trt_N_num + Residuals)) 
+```
+
+
+```{r}
+semdat <- read.csv("../../Data/SEM_table.csv")
+
+semdat_agg <- semdat %>% group_by(site_code) %>% select(-block) %>% summarise_all(mean)
+
+full_site_chars <- full_site_chars %>%
+  left_join(semdat_agg, by = c("site" = "site_code")) %>%
+  filter(site != 'sevi.us')
+
+full_site_chars %>%
+  ggplot(aes(x = temporal_beta_q0,
+             y = percent_captured,
+             color = continent)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, alpha = .5)+
+  stat_smooth(method = "lm", se = FALSE, color = "black")+
+  ggrepel::geom_label_repel(aes(label = site))
+
+summary(lm(percent_captured ~ temporal_beta_q0, data = full_site_chars))
+```
+
+
+full_site_chars %>%
+  filter(site != "sevi.us") %>%
+  ggplot(aes(x = RAIN_PET,
+             y = temporal_beta_q0,
+             color = continent)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, color = 'black') +
+  guides(color = FALSE) +
+  ggrepel::geom_label_repel(aes(label = site))
+
+full_site_chars %>%
+  filter(site != "sevi.us") %>%
+ggplot(aes(x = ,
+             y = temporal_beta_q0,
+             color = continent)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, color = 'black') +
+  guides(color = FALSE) +
+  ggrepel::geom_label_repel(aes(label = site))
+
+full_site_chars %>%
+  filter(site != "sevi.us") %>%
+  ggplot(aes(x = sd_N / mean_N,
+             y = spatial_beta_q0,
+             color = continent)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE, color = 'black') +
+  guides(color = FALSE) +
+  ggrepel::geom_label_repel(aes(label = site))
+
+
+
+summary(lm(temporal_beta_q0 ~  MAP_WARM_Q_v2 + TEMP_WET_Q_v2, data = full_site_chars))
+```
+
+

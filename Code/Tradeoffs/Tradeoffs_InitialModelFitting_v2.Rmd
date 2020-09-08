@@ -14,8 +14,8 @@ library(vegan) # General ecology functions
 library(data.table) # Fast reading of data tables
 library(testthat) # Unit testing
 library(fastDummies) # Fast generation of dummy variables
-# library(dtplyr) #Dplyr for data.table
-library(mvabund) # RRPP for multivariate model fitting
+library(permute)
+library(RRPP) # RRPP for multivariate model fitting
 library(gridExtra)
 library(grid)
 library(wesanderson)
@@ -28,26 +28,57 @@ write_datasets = TRUE
 ### Reading in Dataframes
 
 ```{r}
-# Community data wide format
-cover.wide <- read.csv("../../Data/cover_wide_tradeoffs.csv")
+comb_by_plot <- read.csv("../../Data/comb-by-plot-23-april-2020.csv") %>%
+  filter(trt %in% c("Control", "N", "P", "K")) %>%
+  select(site_code, block, plot, year_trt, trt, year)
 
-# Site attributes
+# Community data long format
+cover.long <- read.csv("../../Data/cover_long_tradeoffs.csv", row.names = 1)
+
+# Site attribute dataset
 site.attr <- read.csv("../../Data/comb-by-plot-23-april-2020.csv")
+
+# Species filtering table
+specfilters <- read.csv("../../Data/tradeoffs_species_filtering.csv", row.names = 1)
+specfilters <- specfilters %>%
+  mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
+  mutate(Taxon = tolower(str_trim(Taxon))) %>%
+  filter("site_code" != "saline.us")
+
+specfilters[specfilters$site_code == "sevi.us",c("Occ_Control", "Occ_Total")] = specfilters[specfilters$site_code == "sevi.us",c("Occ_Control", "Occ_Total")] / 5
 
 # Analysis parameters
 min_yr_trt <- 5 # Number of years minimum to be included in analysis
+perm_iter <- 1e4
 ```
+
 
 ### Subsetting datasets to attribute and community matrices
 
 ```{r}
-# Checking that all cover values are numeric
-cols <- c(colnames(cover.wide)[-c(1:6)])
-cover.wide[-c(1:6)] <- apply(cover.wide[-c(1:6)], MARGIN = 2, FUN = as.numeric)
+# Filtering community data to species of interest
+cover.wide <- cover.long %>%
+  mutate(Taxon = tolower(Taxon)) %>% # Joining together all datasets
+  inner_join(specfilters, by = c("site_code", "Taxon")) %>%
+  filter(Occ_Total > 0.33) %>%
+  select(colnames(cover.long)) %>%
+  pivot_wider(names_from = Taxon, values_from = max_cover, values_fill = list(max_cover = 0)) %>%
+  select(-yrs.data, -min.plot, -subplot)
 
+cover.wide <- left_join(comb_by_plot %>% filter(site_code %in% unique(cover.long$site_code)), 
+                        cover.wide, 
+                        by = colnames(comb_by_plot))
+
+cover.wide[is.na(cover.wide)] <- 0
+
+rm(cover.long)
+```
+
+
+```{r}
 # Separating dataframe into cover and attribute
-attr.mat = cover.wide[,1:7] %>% column_to_rownames(var="X")
-cover.vals = data.frame(cover.wide[,-c(2:7)]) %>% column_to_rownames(var="X")
+attr.mat = cover.wide[,1:6]
+cover.vals = cover.wide[,-c(1:6)]
 
 # Should we normalize?
 ## Normalizing might be standard if we're dealing in proportions
@@ -64,18 +95,22 @@ attr.mat = dummy_columns(attr.mat,
                          select_columns = "trt",
                          remove_first_dummy = TRUE) %>%
   replace_na(list(trt_K = 0, trt_N = 0, trt_P = 0)) %>%
-  mutate(trt_K_num = log(as.numeric(trt_K * year_trt) + 1),
-         trt_P_num = log(as.numeric(trt_P * year_trt) + 1),
-         trt_N_num = log(as.numeric(trt_N * year_trt) + 1))
+  mutate(trt_K_num = as.numeric(trt_K * year_trt),
+         trt_P_num = as.numeric(trt_P * year_trt),
+         trt_N_num = as.numeric(trt_N * year_trt))
+  # mutate(trt_K_num = log(as.numeric(trt_K * year_trt) + 1),
+  #        trt_P_num = log(as.numeric(trt_P * year_trt) + 1),
+  #        trt_N_num = log(as.numeric(trt_N * year_trt) + 1))
 
 # Setting treatment effects to zero for the first year of treatment
 attr.mat$trt_K[attr.mat$year_trt == 0] = 0
 attr.mat$trt_P[attr.mat$year_trt == 0] = 0
 attr.mat$trt_N[attr.mat$year_trt == 0] = 0
 
-
 # Creating dataset of sites used in the analysis
-sites_df <- left_join(attr.mat %>% select(site_code, plot, year), site.attr, by = c("site_code", "plot", "year")) %>% 
+sites_df <- left_join(attr.mat %>% select(site_code, plot, year), 
+                      site.attr, 
+                      by = c("site_code", "plot", "year")) %>% 
   group_by(site_code) %>%
   summarise(site_name = unique(site_name),
             continent = unique(continent),
@@ -85,6 +120,7 @@ sites_df <- left_join(attr.mat %>% select(site_code, plot, year), site.attr, by 
             first_nutrient_year = unique(first_nutrient_year)) %>%
   filter(!(site_code%in% c("doane.us", "pape.de")))
 
+# Write new datasets
 if(write_datasets){
   
   write.csv("../../Data/tradeoffs_selectedsites.csv",
@@ -103,14 +139,14 @@ if(write_datasets){
 rm(cover.wide, cover.vals)
 ```
 
-### Fitting RRPP models to each site
+### Fitting manylm models to each site
 
 ```{r}
 output_list <- list()
 counter <- 1
 
 sitenames = unique(attr.mat$site_code)
-sitenames = sitenames[!(sitenames %in% c("doane.us", "pape.de"))]
+sitenames = sitenames[!(sitenames %in% c("doane.us", "pape.de", "saline.us"))]
 
 # For all unique sites selected
 for(sites in sitenames){
@@ -123,7 +159,7 @@ for(sites in sitenames){
   # Remove all zero columns
   com.subset <- com.subset[,colSums(com.subset) > 0]
   
-  # Set lowest value equal to one
+  # Set values less than 1, but greater than 0 to 1
   com.subset[com.subset > 0 & com.subset < 1] = 1
   com.subset = round(com.subset)
   
@@ -141,32 +177,24 @@ for(sites in sitenames){
   expect_true(nrow(attr.subset) == nrow(com.subset))
   expect_true(nrow(attr.subset) > 0)
   
-  
-  mod_manylm <- manylm(com.subset ~ year_trt + trt_K_num + trt_P_num + trt_N_num + plot,
-                      data = attr.subset)
-  
-  
-  if(length(unique(attr.subset$block)) > 1){
-      mod_rrpp <- lm.rrpp(com.subset ~ year_trt + trt_K_num + trt_P_num + trt_N_num + plot,
+  # Setting permutations
+  mod_rrpp <- lm.rrpp(com.subset ~ year_trt + trt_K_num + trt_P_num + trt_N_num + plot,
                       data = attr.subset,
                       SS.type = "III",
-                      iter = num_iter,
+                      iter = perm_iter,
                       print.progress = FALSE)
-  }else{
-      mod_rrpp <- lm.rrpp(com.subset ~ year_trt + trt_K_num + trt_P_num + trt_N_num,
-                      data = attr.subset,
-                      SS.type = "III",
-                      iter = num_iter,
-                      print.progress = FALSE)
-  }
+  
+  
+  png(paste("../../Figures/rrpp_diagnostics/", sites,".png", sep = ""))
+  par(mfrow = c(2,2))
+  plot(mod_rrpp, type = "diagnostics")
+  dev.off()
 
-
+  
   # Saving ouput
   output = list(siteinfo = attr.subset,
                 aovtable = anova(mod_rrpp, effect.type = "F"),
                 specscores = coef(mod_rrpp))
-  
-  plot(mod_rrpp)
 
   output_list[[counter]] = output
   counter = counter + 1
@@ -295,7 +323,7 @@ dotoutput = specscores_full %>% group_by(site) %>%
 site_pvals = read.csv("../../Data/tradeoffs_RRPP_Pvals.csv", header = TRUE, stringsAsFactors = FALSE)
 
 # Join all together (sites, treatments, dot-product pairs, perMANOVA p-values)
-dot_full = left_join(site_pvals %>% select(-Total, -Residuals), dotoutput) %>%
+dot_full = left_join(site_pvals, dotoutput) %>%
   select(-X) %>%
   rename("trt_K" = "trt_K_num", "trt_P" =  "trt_P_num", "trt_N" = "trt_N_num")
 
@@ -313,38 +341,9 @@ mag_summary <- dot_full %>% select(site, N_change, P_change, K_change) %>%
                values_to = "magnitude")
 
 library(lme4); library(lmerTest)
-summary(lmer(log(magnitude) ~ trt + (1|site), data = mag_summary))
-plot(lmer(log(magnitude) ~ trt + (1|site), data = mag_summary))
+summary(lmer(magnitude ~ trt + (1|site), data = mag_summary))
+plot(lmer(magnitude ~ trt + (1|site), data = mag_summary))
 
-```
-
-
-
-```{r}
-sigtally <- site_pvals %>% select(trt_N_num, trt_P_num, trt_K_num) %>%
-  mutate_all(function(x) x < 0.05) %>%
-  mutate(NP = trt_N_num == 1 & trt_P_num == 1,
-         NK = trt_N_num == 1 & trt_K_num == 1,
-         PK = trt_P_num == 1 & trt_K_num == 1,
-         NPK = trt_N_num == 1 & trt_P_num == 1 & trt_K_num == 1)  %>%
-  mutate_all(as.numeric) %>%
-  rename("K" = "trt_K_num",
-         "N" = "trt_N_num",
-         "P" = "trt_P_num") %>%
-  summarise_all(sum) %>%
-  gather()
-
-sigtally$key = factor(sigtally$key, levels = sigtally$key)
-
-sigtally %>% ggplot(aes(x = key,
-                        y = value / nrow(site_pvals),
-                        fill = key)) +
-  geom_bar(aes(y = 1), stat = "identity", fill = "white", color = "black") +
-  geom_bar(stat = "identity", color = "black") +
-  scale_fill_manual(values = c("cadetblue1", "cadetblue3", "cadetblue4", "gold", "gold3", "gold4", "brown3")) +
-  ylim(0, 1) +
-  ylab("Proportion of Sites where P < 0.05") +
-  xlab("Coefficients")
 ```
 
 ### Plotting as a Venn Diagram
@@ -401,3 +400,6 @@ myvenn <- venn.diagram(
         
 )
 ```
+
+
+

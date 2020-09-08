@@ -1,0 +1,12 @@
+name: NN-DataChecking
+title: NN-DataChecking
+username:
+account: ebatzer
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 2479208
+bundleId: 3293181
+url: https://ebatzer.shinyapps.io/NN-DataChecking/
+when: 1592593887.66617
+asMultiple: FALSE
+asStatic: FALSE

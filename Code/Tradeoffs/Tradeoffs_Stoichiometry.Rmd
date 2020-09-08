@@ -1,0 +1,92 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+# Likely too few observations to be useful -- subset of a subset of a subset...
+
+# However, I think this would be a great follow-up paper -- can we predict nutrient response
+# of different taxa based on their tissue stoichiometry and other features?
+
+```{r}
+library(tidyverse)
+
+# Fitted species response coefficients
+specscores_full <- read.csv("../../Data/tradeoffs_specscores.csv", row.names = 1)
+
+# Transforming to long format
+specscores_long <- specscores_full %>%
+  gather(key = "Taxon", value = "Coef", - site, - trt) %>%
+  mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
+  mutate(Taxon = tolower(str_trim(Taxon))) %>%
+  rename("site_code" = "site") %>%
+  filter("site_code" != "saline.us")
+
+fol_traits <- read.csv("../../Data/NutNet-foliar-traits-7JAN2017.csv")
+
+sum(unique(specscores_long$Taxon) %in% tolower(unique(fol_traits$Taxon))) / length(unique(specscores_long$Taxon))
+
+trait_summ <- fol_traits %>% group_by(site_code) %>% summarise(stoich_count = length(unique(Taxon)))
+coef_summ <- specscores_long %>% group_by(site_code) %>% filter(Coef != 0) %>% summarise(coef_count = length(unique(Taxon)))
+
+coef_summ %>% left_join(trait_summ)
+```
+
+```{r}
+specscores_long %>% filter(Coef != 0)
+```
+
+```{r}
+trait_vals <- fol_traits %>% 
+  filter(trt == "Control") %>% 
+  group_by(site_code, Taxon) %>% 
+  summarise(mean_CN = mean(na.omit(as.numeric(leaf_pct_C) / as.numeric(leaf_pct_N))),
+            mean_CP = mean(na.omit(as.numeric(leaf_pct_C) / as.numeric(leaf_ppm_P))),
+            mean_CK = mean(na.omit(as.numeric(leaf_pct_C) / as.numeric(leaf_ppm_K))),
+            mean_SLA = mean(na.omit(as.numeric(SLA))),
+            leaf_area = mean(na.omit(as.numeric(leaf_area_mm2)))) %>%
+  mutate(Taxon = gsub("\\.", " ", Taxon)) %>%
+  mutate(Taxon = gsub("-", " ", Taxon)) %>%
+  mutate(Taxon = tolower(str_trim(Taxon))) %>%
+  mutate_if(is.numeric, scale)
+
+specscores_long %>% 
+  filter(Coef != 0) %>% 
+  pivot_wider(names_from = "trt",
+              values_from = "Coef") %>%
+  inner_join(trait_vals) %>%
+  arrange(site_code) %>%
+  ggplot(aes(x = leaf_area,
+             y = trt_N,
+             color = site_code)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = FALSE)
+```
+
+```{r}
+specscores_long %>%
+  filter(site_code == "azi.cn") %>%
+  filter(Coef != 0)
+
+repeated_taxa <- specscores_long %>% 
+  filter(Coef != 0) %>%
+  select(site_code, Taxon) %>%
+  distinct() %>%
+  group_by(Taxon) %>%
+  summarise(count = n()) %>%
+  ungroup() %>%
+  filter(count > 2)
+
+specscores_long %>%
+  filter(Taxon %in% repeated_taxa$Taxon) %>%
+  filter(Coef != 0) %>%
+  group_by(site_code, Taxon) %>%
+  summarise(Coef = mean(Coef)) %>%
+  ggplot(aes(x = Taxon,
+             y = Coef,
+             color = site_code)) +
+  geom_hline(yintercept = 0) +
+  geom_point() + 
+  guides(color = FALSE) +
+  theme(axis.text.x = element_text(angle = 90)) 
+```
+

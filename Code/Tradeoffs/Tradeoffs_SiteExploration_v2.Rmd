@@ -1,0 +1,291 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(vegan); library(lavaan); library(tidyverse); library(lme4); library(lmerTest)
+write_datasets = FALSE
+```
+
+# Deriving site-level abiotic and commmunity variables
+
+```{r}
+sitechars <- read.csv("../../Data/comb-by-plot-clim-soil-diversity-03-Jun-2020.csv",
+                        stringsAsFactors = FALSE)
+
+cover.long <- read.csv("../../Data/cover_long_tradeoffs.csv",
+                       row.names = 1,
+                       stringsAsFactors = FALSE)
+
+projdat <- read.csv("../../Data/tradeoffs_dimstats.csv",
+                    row.names = 1,
+                    stringsAsFactors = FALSE)
+
+taxonomy <- read.csv("../../Data/tradeoffs_taxonomy.csv", 
+                     row.names = 1)
+
+```
+
+```{r}
+calc_div = function(x, qval){
+  
+  if(qval == 0){
+    
+    alpha = specnumber(x)
+    gamma = specnumber(colSums(x))
+    beta = gamma / alpha
+  }
+  
+  if(qval == 1){
+    alpha = exp(diversity(x, "shannon"))
+    gamma = exp(diversity(colSums(x), "shannon"))
+    beta = gamma / alpha
+  }
+    
+  if(qval == 2){
+    alpha = diversity(x, "invsimpson")
+    gamma = diversity(colSums(x), "invsimpson")
+    beta = gamma / alpha
+  }
+  
+  output = data.frame(alpha = alpha,
+                      gamma = rep(gamma, length(alpha)),
+                      beta = beta)
+  
+  names(output) = paste0(names(output), paste("_q", qval, sep = ""), sep = "")
+  
+  return(output)
+  
+}
+```
+
+```{r, warning=FALSE}
+site_abiotic <- sitechars %>% 
+  group_by(site_code) %>%
+  select(managed, burned, grazed, anthropogenic, 
+         MAP_v2, MAP_WARM_Q_v2, 
+         MAT_v2, TEMP_WET_Q_v2,
+         RAIN_PET, PET,
+         pct_C, pct_N, ppm_P, ppm_K,
+         proportion_par,
+         site_richness, site_introduced_richness,
+         live_mass, litter_mass) %>%
+  mutate_all(as.numeric) %>%
+  summarise_all(function(x) mean(na.omit(x)))
+
+site_years <- sitechars %>% 
+  group_by(site_code, site_name, continent, country, habitat) %>%
+  summarise(first_year = min(year),
+            last_year = max(year),
+            n_years = length(unique(year_trt)))
+```
+
+```{r}
+cover.spat <- cover.long %>% 
+  filter(year_trt == 0) %>%
+  select(site_code, block, plot, Taxon, max_cover) %>%
+  mutate(max_cover = as.numeric(max_cover)) %>%
+  group_by(site_code, block, plot, Taxon) %>%
+  summarise(max_cover = sum(max_cover)) %>% 
+  pivot_wider(values_from = max_cover,
+              names_from = Taxon,
+              values_fill = list(max_cover = 0))
+
+sevi_subset <- cover.spat %>% filter(site_code == "sevi.us") %>%
+  ungroup() %>%
+  mutate(block = ceiling(plot / 8))
+
+cover.spat[cover.spat$site_code == "sevi.us",] <- sevi_subset
+
+spat_div = cover.spat %>% 
+  group_by(site_code, block) %>%
+  do(cbind(plot = .$plot, 
+           calc_div(.[,-c(1:3)], qval = 0),
+           calc_div(.[,-c(1:3)], qval = 2))) %>%
+  ungroup() %>%
+  select(-plot) %>%
+  group_by(site_code) %>%
+  summarise_all(mean)
+
+colnames(spat_div)[-c(1:2)] <- paste(colnames(spat_div)[-c(1:2)], '_spat', sep = '')
+```
+
+```{r}
+cover.temp <- cover.long %>% 
+  filter(year_trt < 5 & 
+           trt == "Control") %>% 
+  select(site_code, year_trt, plot, Taxon, max_cover) %>%
+  mutate(max_cover = as.numeric(max_cover)) %>%
+  group_by(site_code, year_trt, plot, Taxon) %>%
+  summarise(max_cover = sum(max_cover)) %>%
+  pivot_wider(values_from = max_cover,
+              names_from = Taxon,
+              values_fill = list(max_cover = 0))
+
+temp_div <- cover.temp %>%
+  group_by(site_code, plot) %>%
+  do(cbind(plot = .$plot, 
+           calc_div(.[,-c(1:3)], qval = 0),
+           calc_div(.[,-c(1:3)], qval = 2))) %>%
+  ungroup() %>%
+  select(-plot) %>%
+  group_by(site_code) %>%
+  summarise_all(mean)
+
+colnames(temp_div)[-c(1)] <- paste(colnames(temp_div)[-c(1)], '_temp', sep = '')
+
+```
+
+```{r}
+comm_att <- cover.long %>% 
+  left_join(taxonomy, by = c("site_code", "Taxon")) %>%
+  filter(year_trt == 0) %>%
+  group_by(site_code, block) %>%
+  summarise(total_cover = sum(na.omit(max_cover)),
+            ann_cover = sum(na.omit(max_cover[lifespan == 'ANNUAL'])),
+            legume_cover = sum(na.omit(max_cover[functional_group == 'Legume'])),
+            gram_cover = sum(na.omit(max_cover[functional_group == 'Graminoid'])),
+            forb_cover = sum(na.omit(max_cover[functional_group == 'Forb'])),
+            woody_cover = sum(na.omit(max_cover[functional_group == 'Woody']))) %>%
+  mutate(ann_frac = ann_cover / total_cover,
+         legume_frac = legume_cover / total_cover,
+         gram_frac = gram_cover / total_cover,
+         forb_frac = forb_cover / total_cover,
+         woody_frac = woody_cover / total_cover) %>%
+  mutate(func_div = vegan::diversity(c(legume_frac, gram_frac, forb_frac, woody_frac),
+                                     index = "invsimpson")) %>%
+  ungroup() %>%
+  group_by(site_code) %>%
+  select(-block) %>%
+  summarise_all(mean)
+```
+
+```{r}
+site_table <- projdat %>% 
+  select(site_code, percent_captured, n_taxa) %>%
+  left_join(site_years) %>%
+  left_join(site_abiotic, by = "site_code") %>%
+  left_join(comm_att, by = "site_code") %>%
+  left_join(spat_div, by = "site_code") %>%
+  left_join(temp_div, by = "site_code") 
+
+if(write_datasets){
+  site_summary <- site_table %>% 
+    select(site_name, continent, country, habitat,
+           first_year, last_year, n_years,
+           MAP_v2, MAT_v2, n_taxa, percent_captured)
+  
+  write.csv(site_summary,
+            file = "../../Data/tradeoffs_sitesummary.csv")
+}
+```
+
+# Testing for effects of mangitude
+
+```{r}
+dat_mag <- projdat %>% left_join(site_years, by = "site_code") %>%
+  select(site_code, n_taxa, n_years, N_change, P_change, K_change) %>%
+  pivot_longer(cols = c('N_change', 'P_change', 'K_change'),
+               names_to = "Trt",
+               values_to = "Mag")
+
+mod_null <- lmer(Mag ~ Trt + (1| site_code), data = dat_mag)
+mod_1 <- lmer(Mag ~ Trt + n_taxa +(1| site_code), data = dat_mag)
+mod_2 <- lmer(Mag ~ Trt + n_years +(1| site_code), data = dat_mag)
+mod_full <- lmer(Mag ~ Trt + n_years + n_taxa + (1| site_code), data = dat_mag)
+
+anova(mod_null, mod_1)
+anova(mod_null, mod_2)
+anova(mod_full, mod_1)
+anova(mod_full, mod_2)
+
+anova(mod_null)
+```
+
+
+
+```{r}
+sem_table <- site_table %>%
+  select(percent_captured,
+         site_richness,
+         TEMP_WET_Q_v2, MAP_WARM_Q_v2,MAP_v2, MAT_v2, 
+         beta_q0_spat, beta_q0_temp,
+         pct_C, pct_N, ppm_P, ppm_K,
+         burned, anthropogenic, grazed,
+         legume_frac, ann_frac,
+         live_mass, litter_mass,
+         proportion_par) %>%
+  mutate(total_mass = live_mass + litter_mass)
+
+sem_table <- sem_table %>%
+  mutate(percent_captured = 1- percent_captured,
+         ann_frac = log(1 - ann_frac),
+         legume_frac = log(1 - legume_frac),
+         beta_q0_spat = log(beta_q0_spat),
+         beta_q0_temp = log(beta_q0_temp),
+         site_richness = log(site_richness),
+         pct_N = log(pct_N),
+         ppm_P = log(ppm_P),
+         ppm_K = log(ppm_K),
+         litter_mass = litter_mass,
+         live_mass = log(live_mass),
+         total_mass = log(total_mass))
+
+sem_table %>% 
+  keep(is.numeric) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram()
+```
+
+```{r}
+sem_table <- na.omit(sem_table)
+
+# Defining soil composite variable for beta spatial diversity
+soil_coef <- coef(lm(beta_q0_spat ~ site_richness + pct_N + ppm_P + ppm_K + TEMP_WET_Q_v2 + MAP_WARM_Q_v2, data = sem_table))
+
+sem_table <- sem_table %>% mutate(soil_turnover = pct_N * soil_coef[2] +
+                       ppm_P * soil_coef[3] +
+                       ppm_K * soil_coef[4], 
+                       clim_turnover = TEMP_WET_Q_v2 * soil_coef[5] +
+                         MAP_WARM_Q_v2 * soil_coef[6])
+
+# Defining soil composite variable for biomass
+soil_coef <- coef(lm(total_mass ~ pct_N + ppm_P + ppm_K + TEMP_WET_Q_v2 + MAP_WARM_Q_v2, data = sem_table))
+
+sem_table <- sem_table %>% mutate(soil_mass = pct_N * soil_coef[2] +
+                       ppm_P * soil_coef[3] +
+                       ppm_K * soil_coef[4])
+
+sem_table <- sem_table %>% mutate(clim_prod = TEMP_WET_Q_v2 * soil_coef[5] +
+                       MAP_WARM_Q_v2 * soil_coef[6])
+
+# Defining climate composits for beta temporal diversity, productivity
+clim_coef <- coef(lm(percent_captured ~ TEMP_WET_Q_v2 + MAP_WARM_Q_v2 +
+                      beta_q0_spat + total_mass + 
+                          proportion_par + legume_frac, data = sem_table))
+
+sem_table <- sem_table %>% mutate(clim_dim = TEMP_WET_Q_v2 * clim_coef[2] +
+                       MAP_WARM_Q_v2 * clim_coef[3])
+cor(clim_dim, clim_)
+# Specifying SEM
+sitemod <- '
+beta_q0_spat ~ site_richness + soil_turnover + clim_turnover
+total_mass ~ clim_prod + soil_mass 
+proportion_par ~ total_mass
+percent_captured ~ beta_q0_spat + proportion_par + total_mass + legume_frac + clim_dim
+'
+cor(sem_table %>% select(clim_turnover, clim_prod, clim_dim))
+sitemod.fit <- sem(sitemod, data=sem_table,
+                   meanstructure=TRUE, fixed.x=FALSE)
+summary(sitemod.fit, rsq = TRUE, fit.measures = TRUE)
+
+if(write_datasets){
+  write.csv(x = standardizedSolution(sitemod.fit),
+            file = "../../Data/tradeoffs_SEMcoefs.csv")
+}
+```
+ 
+ 
